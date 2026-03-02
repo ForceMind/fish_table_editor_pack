@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>渔场脚本可视化编辑器</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>渔场脚本可视化编辑器</h1>
+      <p id="table-dir" class="muted"></p>
+    </div>
+    <div class="topbar-actions">
+      <div class="action-row">
+        <button id="reload-btn" type="button">重新读取表</button>
+        <button id="add-row-btn" type="button">新增脚本行</button>
+        <button id="sort-btn" type="button">按 ScriptId 排序</button>
+        <button id="auto-generate-btn" type="button">智能生成脚本</button>
+        <button id="save-btn" type="button" class="primary">保存新副本（自动重命名）</button>
+        <button id="save-as-btn" type="button">另存为前缀...</button>
+      </div>
+      <div class="preset-toolbar">
+        <label for="preset-select">本地方案</label>
+        <select id="preset-select"></select>
+        <button id="preset-load-btn" type="button">加载</button>
+        <button id="preset-save-btn" type="button">保存当前</button>
+        <button id="preset-delete-btn" type="button">删除</button>
+      </div>
+      <details class="llm-config">
+        <summary>大模型配置（标准 Chat Completions）</summary>
+        <div class="llm-grid">
+          <label>生成模式
+            <select id="gen-mode">
+              <option value="auto">优先大模型，失败回退本地</option>
+              <option value="llm">仅大模型</option>
+              <option value="local">仅本地算法</option>
+            </select>
+          </label>
+          <label>最少每场脚本数
+            <input id="gen-min-per-arena" type="number" min="3" max="20" step="1" value="6">
+          </label>
+          <label>API Base URL
+            <input id="llm-base-url" type="text" placeholder="https://api.openai.com/v1">
+          </label>
+          <label>模型
+            <input id="llm-model" type="text" placeholder="gpt-4.1-mini">
+          </label>
+          <label>API Key
+            <input id="llm-api-key" type="password" placeholder="sk-...">
+          </label>
+          <label>温度(0-1)
+            <input id="llm-temperature" type="number" min="0" max="1" step="0.1" value="0.2">
+          </label>
+          <label>Max Tokens
+            <input id="llm-max-tokens" type="number" min="512" max="8192" step="64" value="2048">
+          </label>
+          <button id="llm-save-btn" type="button">保存LLM配置</button>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel logic">
+      <h2>配置逻辑</h2>
+      <ul id="logic-list"></ul>
+
+      <h2>场次</h2>
+      <div id="arena-tags" class="tag-list"></div>
+
+      <h2>筛选鱼群</h2>
+      <input id="group-search" type="text" placeholder="输入 GroupId / 中文鱼名 / 英文鱼名 / 路径ID">
+      <div class="inline-filter">
+        <label for="group-boss-filter">Boss筛选</label>
+        <select id="group-boss-filter">
+          <option value="all">全部</option>
+          <option value="boss">仅Boss</option>
+          <option value="normal">非Boss</option>
+        </select>
+      </div>
+      <div id="group-list" class="group-list"></div>
+    </section>
+
+    <section class="main-stack">
+      <section class="panel timeline">
+        <div class="panel-head timeline-head">
+          <h2>时间线预览</h2>
+          <div class="timeline-controls">
+            <select id="timeline-arena-select"></select>
+            <select id="timeline-view-mode">
+              <option value="cut">剪辑视图（主编辑）</option>
+              <option value="overlap">重叠检查（辅助）</option>
+            </select>
+          </div>
+        </div>
+        <p class="muted">剪辑视图: 每个 Group 时长固定，只调位置。拖动缝隙手柄可改 Group 间隔，最小不会早于上一组出生完成点。</p>
+        <div id="timeline-summary" class="timeline-summary"></div>
+        <div id="generate-report" class="generate-report muted"></div>
+        <div id="timeline-track" class="timeline-track"></div>
+        <div id="timeline-events" class="timeline-events"></div>
+      </section>
+
+      <section class="panel scripts">
+        <div class="panel-head">
+          <h2>Script 配置</h2>
+          <p class="muted">可拖拽行顺序。展开可查看每个 Group 的顺序、赔率和绝对时间。</p>
+        </div>
+        <div class="table-wrap">
+          <table id="script-table">
+            <thead>
+              <tr>
+                <th class="w-order">排序</th>
+                <th class="w-index">#</th>
+                <th class="w-script-id">ScriptId</th>
+                <th class="w-gap">Group间隔(ms)</th>
+                <th>Arena(房间)</th>
+                <th class="w-type">Type</th>
+                <th>Group(鱼群)</th>
+                <th>展开明细（顺序/赔率/时间）</th>
+                <th class="w-op">操作</th>
+              </tr>
+            </thead>
+            <tbody id="script-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="group-picker">
+    <div class="dialog-head">
+      <h3>选择鱼群组合</h3>
+      <button id="picker-close" type="button">关闭</button>
+    </div>
+    <p id="picker-row-info" class="muted"></p>
+    <input id="picker-search" type="text" placeholder="输入 GroupId / 中文鱼名 / 英文鱼名 / 路径ID">
+    <div class="inline-filter">
+      <label for="picker-boss-filter">Boss筛选</label>
+      <select id="picker-boss-filter">
+        <option value="all">全部</option>
+        <option value="boss">仅Boss</option>
+        <option value="normal">非Boss</option>
+      </select>
+    </div>
+    <div id="picker-list" class="picker-list"></div>
+    <div class="dialog-actions">
+      <button id="picker-clear" type="button">清空</button>
+      <button id="picker-apply" type="button" class="primary">应用到当前行</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
