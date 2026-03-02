@@ -8,7 +8,8 @@ const state={
   presets:[],selectedPresetName:"",
   llmConfig:{mode:"auto",minPerArena:6,baseUrl:"https://api.openai.com/v1",model:"gpt-4.1-mini",apiKey:"",temperature:0.2,maxTokens:2048},
   timelineScale:{pxPerMs:0.005,baseX:70},
-  gapDrag:{active:false,scriptIndex:-1,startX:0,startGapMs:0,pxPerMs:0.005}
+  gapDrag:{active:false,scriptIndex:-1,startX:0,startGapMs:0,pxPerMs:0.005},
+  aiReview:{busy:false,candidateScripts:[],validatedScripts:[],sourceTag:"",minPerArena:6,lastRequest:null,lastResponse:null}
 };
 
 const els={
@@ -24,7 +25,13 @@ const els={
   llmApiKey:document.getElementById("llm-api-key"),llmTemperature:document.getElementById("llm-temperature"),llmMaxTokens:document.getElementById("llm-max-tokens"),
   groupPicker:document.getElementById("group-picker"),pickerRowInfo:document.getElementById("picker-row-info"),
   pickerSearch:document.getElementById("picker-search"),pickerBossFilter:document.getElementById("picker-boss-filter"),
-  pickerList:document.getElementById("picker-list"),toast:document.getElementById("toast")
+  pickerList:document.getElementById("picker-list"),toast:document.getElementById("toast"),
+  aiDialog:document.getElementById("ai-review-dialog"),aiReviewClose:document.getElementById("ai-review-close"),
+  aiReviewCancel:document.getElementById("ai-review-cancel"),aiStatusBadge:document.getElementById("ai-status-badge"),
+  aiStatusLog:document.getElementById("ai-status-log"),aiRequestJson:document.getElementById("ai-request-json"),
+  aiRawJson:document.getElementById("ai-raw-json"),aiEditJson:document.getElementById("ai-edit-json"),
+  aiValidateMsg:document.getElementById("ai-validate-msg"),aiValidateBtn:document.getElementById("ai-validate-btn"),
+  aiFormatBtn:document.getElementById("ai-format-btn"),aiApplyBtn:document.getElementById("ai-apply-btn")
 };
 
 bindEvents();
@@ -76,6 +83,25 @@ function bindEvents(){
   els.pickerSearch.addEventListener("input",renderPickerList);
   els.pickerBossFilter.addEventListener("change",()=>{state.pickerBossFilter=els.pickerBossFilter.value;renderPickerList();});
   els.pickerList.addEventListener("change",onPickerChange);
+
+  if(els.aiReviewClose) els.aiReviewClose.addEventListener("click",closeAIReviewDialog);
+  if(els.aiReviewCancel) els.aiReviewCancel.addEventListener("click",closeAIReviewDialog);
+  if(els.aiDialog){
+    els.aiDialog.addEventListener("cancel",(evt)=>{
+      if(state.aiReview.busy){
+        evt.preventDefault();
+        toast("AI生成中，请稍候完成。",true);
+      }
+    });
+  }
+  if(els.aiValidateBtn) els.aiValidateBtn.addEventListener("click",()=>validateReviewEditor(true));
+  if(els.aiFormatBtn) els.aiFormatBtn.addEventListener("click",formatReviewEditorJson);
+  if(els.aiApplyBtn) els.aiApplyBtn.addEventListener("click",applyReviewScripts);
+  if(els.aiEditJson) els.aiEditJson.addEventListener("input",()=>{
+    if(els.aiApplyBtn) els.aiApplyBtn.disabled=true;
+    state.aiReview.validatedScripts=[];
+    setAIValidateMessage("JSON已修改，请重新校验。",false);
+  });
 }
 
 async function loadData(){
@@ -212,6 +238,248 @@ function renderGenerateReport(scripts){
     lines.push(`Arena ${arenaId}: 脚本${st.scripts}条 | ${bossTag} | 低/中/高=${st.low}/${st.mid}/${st.high}`);
   }
   els.generateReport.textContent="生成报告： "+lines.join(" ； ");
+}
+
+function openAIReviewDialog(){
+  if(!els.aiDialog) return;
+  if(els.aiDialog.open) return;
+  if(typeof els.aiDialog.showModal==="function") els.aiDialog.showModal();
+}
+
+function closeAIReviewDialog(){
+  if(!els.aiDialog) return;
+  if(state.aiReview.busy){
+    toast("AI生成中，请稍候完成。",true);
+    return;
+  }
+  els.aiDialog.close();
+}
+
+function aiTimeLabel(){
+  try{
+    return new Date().toLocaleTimeString("zh-CN",{hour12:false});
+  }catch(_e){
+    return new Date().toISOString();
+  }
+}
+
+function setAIStatusBadge(text,isWarn){
+  if(!els.aiStatusBadge) return;
+  els.aiStatusBadge.textContent=text||"";
+  els.aiStatusBadge.classList.toggle("warn",Boolean(isWarn));
+}
+
+function pushAIStatus(message,isWarn=false){
+  if(!els.aiStatusLog) return;
+  const line=document.createElement("div");
+  line.className=`ai-status-line${isWarn?" warn":""}`;
+  line.textContent=`[${aiTimeLabel()}] ${message}`;
+  els.aiStatusLog.appendChild(line);
+  els.aiStatusLog.scrollTop=els.aiStatusLog.scrollHeight;
+}
+
+function setAIValidateMessage(message,isWarn){
+  if(!els.aiValidateMsg) return;
+  els.aiValidateMsg.textContent=message||"";
+  els.aiValidateMsg.className=`muted ${isWarn?"ai-validate-warn":"ai-validate-ok"}`.trim();
+}
+
+function resetAIReviewDialog(requestPayload){
+  state.aiReview.candidateScripts=[];
+  state.aiReview.validatedScripts=[];
+  state.aiReview.sourceTag="";
+  state.aiReview.lastRequest=requestPayload||null;
+  state.aiReview.lastResponse=null;
+  if(els.aiStatusLog) els.aiStatusLog.innerHTML="";
+  if(els.aiRequestJson) els.aiRequestJson.textContent=requestPayload?JSON.stringify(requestPayload,null,2):"";
+  if(els.aiRawJson) els.aiRawJson.value="";
+  if(els.aiEditJson) els.aiEditJson.value="";
+  if(els.aiApplyBtn) els.aiApplyBtn.disabled=true;
+  setAIStatusBadge("准备请求",false);
+  setAIValidateMessage("等待结果。",false);
+}
+
+function setAIReviewBusy(busy){
+  state.aiReview.busy=Boolean(busy);
+  if(els.aiValidateBtn) els.aiValidateBtn.disabled=state.aiReview.busy;
+  if(els.aiFormatBtn) els.aiFormatBtn.disabled=state.aiReview.busy;
+  if(els.aiApplyBtn) els.aiApplyBtn.disabled=state.aiReview.busy||!state.aiReview.validatedScripts.length;
+}
+
+function setReviewRawResponse(payload){
+  state.aiReview.lastResponse=payload||null;
+  if(!els.aiRawJson) return;
+  if(payload===undefined||payload===null){
+    els.aiRawJson.value="";
+    return;
+  }
+  try{
+    els.aiRawJson.value=JSON.stringify(payload,null,2);
+  }catch(_e){
+    els.aiRawJson.value=String(payload);
+  }
+}
+
+function setReviewEditorPayload(payload){
+  if(!els.aiEditJson) return;
+  try{
+    els.aiEditJson.value=JSON.stringify(payload,null,2);
+  }catch(_e){
+    els.aiEditJson.value=String(payload||"");
+  }
+}
+
+function extractFirstJsonBlock(text){
+  const source=String(text||"");
+  let start=-1;
+  let startChar="";
+  const objIndex=source.indexOf("{");
+  const arrIndex=source.indexOf("[");
+  if(objIndex<0&&arrIndex<0) return "";
+  if(objIndex>=0&&(arrIndex<0||objIndex<arrIndex)){start=objIndex;startChar="{";}
+  else{start=arrIndex;startChar="[";}
+  const stack=[startChar];
+  let inString=false;
+  let escaped=false;
+  for(let i=start+1;i<source.length;i++){
+    const ch=source[i];
+    if(inString){
+      if(escaped){escaped=false;continue;}
+      if(ch==="\\"){escaped=true;continue;}
+      if(ch==="\""){inString=false;}
+      continue;
+    }
+    if(ch==="\""){inString=true;continue;}
+    if(ch==="{"||ch==="["){stack.push(ch);continue;}
+    if(ch==="}"||ch==="]"){
+      const top=stack[stack.length-1];
+      if((top==="{"&&ch==="}")||(top==="["&&ch==="]")){
+        stack.pop();
+        if(!stack.length) return source.slice(start,i+1);
+      }
+    }
+  }
+  return "";
+}
+
+function parseReviewJsonText(text){
+  const raw=String(text||"").trim();
+  if(!raw) return {ok:false,error:"JSON为空"};
+  const tryParse=(s)=>JSON.parse(s);
+  let parsed;
+  let sourceTag="editor.raw";
+  try{
+    parsed=tryParse(raw);
+  }catch(_e){
+    const fenced=raw.startsWith("```")?raw.replace(/^```[a-zA-Z]*\s*/,"").replace(/```$/,"").trim():raw;
+    if(fenced!==raw){
+      try{
+        parsed=tryParse(fenced);
+        sourceTag="editor.fenced";
+      }catch(_e2){}
+    }
+    if(parsed===undefined){
+      const block=extractFirstJsonBlock(raw);
+      if(!block) return {ok:false,error:"未识别到合法JSON对象/数组"};
+      try{
+        parsed=tryParse(block);
+        sourceTag="editor.extracted";
+      }catch(err){
+        return {ok:false,error:`JSON解析失败: ${err.message}`};
+      }
+    }
+  }
+
+  let scripts=null;
+  if(Array.isArray(parsed)) scripts=parsed;
+  else if(parsed&&typeof parsed==="object"){
+    if(Array.isArray(parsed.scripts)) scripts=parsed.scripts;
+    else if(parsed.result&&Array.isArray(parsed.result.scripts)) scripts=parsed.result.scripts;
+    else if(parsed.data&&Array.isArray(parsed.data.scripts)) scripts=parsed.data.scripts;
+  }
+  if(!Array.isArray(scripts)) return {ok:false,error:"JSON中未找到scripts数组"};
+
+  const normalized=[];
+  const issues=[];
+  scripts.forEach((row,idx)=>{
+    const n=normalizeScriptRow(row||{});
+    n.type=n.type===2?2:1;
+    if(n.scriptId<=0){issues.push(`第${idx+1}行 scriptId 非法`);return;}
+    if(!n.groupIds.length){issues.push(`第${idx+1}行 groupIds 为空`);return;}
+    if(!n.arenaIds.length){issues.push(`第${idx+1}行 arenaIds 为空`);return;}
+    normalized.push(n);
+  });
+  if(!normalized.length) return {ok:false,error:"scripts无有效行"};
+
+  const arenaMap=new Map();
+  normalized.forEach((row)=>{
+    const aid=row.arenaIds[0]||0;
+    if(!arenaMap.has(aid)) arenaMap.set(aid,{rows:0,type2:0});
+    const st=arenaMap.get(aid);
+    st.rows+=1;
+    if(row.type===2) st.type2+=1;
+  });
+  const summary=Array.from(arenaMap.entries()).sort((a,b)=>a[0]-b[0]).map(([aid,st])=>`Arena${aid}: ${st.rows}条,Type2=${st.type2}`).join(" | ");
+  return {ok:true,parsed,sourceTag,scripts:normalized,issues,summary};
+}
+
+function validateReviewEditor(showToast){
+  const parsed=parseReviewJsonText(els.aiEditJson?els.aiEditJson.value:"");
+  if(!parsed.ok){
+    state.aiReview.validatedScripts=[];
+    if(els.aiApplyBtn) els.aiApplyBtn.disabled=true;
+    setAIValidateMessage(parsed.error,true);
+    if(showToast) toast(`JSON校验失败: ${parsed.error}`,true);
+    return parsed;
+  }
+  state.aiReview.validatedScripts=parsed.scripts;
+  if(els.aiApplyBtn) els.aiApplyBtn.disabled=state.aiReview.busy||!parsed.scripts.length;
+  const issueText=parsed.issues.length?`；过滤${parsed.issues.length}条无效行`:"";
+  setAIValidateMessage(`已识别 ${parsed.scripts.length} 条脚本（${parsed.summary}${issueText}）`,false);
+  if(showToast) toast(`JSON校验通过：${parsed.scripts.length}条`);
+  return parsed;
+}
+
+function formatReviewEditorJson(){
+  const parsed=parseReviewJsonText(els.aiEditJson?els.aiEditJson.value:"");
+  if(!parsed.ok){
+    setAIValidateMessage(parsed.error,true);
+    toast(`格式化失败: ${parsed.error}`,true);
+    return;
+  }
+  setReviewEditorPayload({scripts:parsed.scripts});
+  validateReviewEditor(false);
+}
+
+async function applyReviewScripts(){
+  if(state.aiReview.busy){
+    toast("AI仍在执行，请稍候。",true);
+    return;
+  }
+  const checked=validateReviewEditor(true);
+  if(!checked.ok) return;
+  const rows=checked.scripts||[];
+  const msg=`将使用审核后的 ${rows.length} 行脚本替换当前编辑区，是否继续？`;
+  if(!window.confirm(msg)) return;
+
+  state.scripts=rows;
+  renderScriptTable();
+  renderTimeline();
+  renderGenerateReport(rows);
+  toast(`已应用 ${rows.length} 行脚本`);
+
+  const sourceTag=state.aiReview.sourceTag||"review-json";
+  const minPerArena=state.aiReview.minPerArena||6;
+  const autoName=`自动生成_${new Date().toISOString().replace(/[:T]/g,"-").slice(0,16)}`;
+  try{
+    const data=await postJson("/api/preset/save",{name:autoName,scripts:state.scripts,meta:{source:sourceTag,minPerArena}});
+    await loadPresetList(data.name);
+    pushAIStatus(`已保存本地方案：${data.name||autoName}`);
+  }catch(err){
+    pushAIStatus(`自动方案保存失败: ${err.message}`,true);
+    toast(`自动方案保存失败: ${err.message}`,true);
+  }
+  closeAIReviewDialog();
 }
 
 function normalizeScriptRow(row){
@@ -1071,13 +1339,18 @@ function generateScriptsForAllArenas(minPerArena){
   return {scripts:out,issues};
 }
 
-async function tryGenerateByModel(minPerArena,llmConfig){
+async function tryGenerateByModel(minPerArena,llmConfig,hooks={}){
+  const onStage=(msg,isWarn=false)=>{if(typeof hooks.onStage==="function") hooks.onStage(msg,isWarn);};
+  const onResponse=(payload,status)=>{if(typeof hooks.onResponse==="function") hooks.onResponse(payload,status);};
+  const onDebug=(item)=>{if(typeof hooks.onDebug==="function") hooks.onDebug(item);};
+  onStage("准备向AI发送请求");
   try{
     console.log("[AI-REQ-JSON] /api/generate-script-ai\n"+JSON.stringify({minPerArena,llmConfig},null,2));
   }catch(_e){
     console.log("[AI-REQ] /api/generate-script-ai payload =",{minPerArena,llmConfig});
   }
   try{
+    onStage("请求已发送，等待AI返回");
     const res=await fetch("/api/generate-script-ai",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -1085,6 +1358,7 @@ async function tryGenerateByModel(minPerArena,llmConfig){
     });
     let data;
     try{data=await res.json();}catch(_e){data={ok:false,error:`HTTP ${res.status} 非JSON响应`};}
+    onResponse(data,res.status);
     try{
       console.log("[AI-RES-JSON] /api/generate-script-ai\n"+JSON.stringify(data,null,2));
     }catch(_e){
@@ -1093,6 +1367,7 @@ async function tryGenerateByModel(minPerArena,llmConfig){
     if(Array.isArray(data.debug)){
       for(const item of data.debug){
         if(!item||typeof item!=="object") continue;
+        onDebug(item);
         if(typeof item.content==="string"){
           console.log(`[AI-DEBUG] ${item.title||"untitled"}\n${item.content}`);
         }else{
@@ -1109,8 +1384,10 @@ async function tryGenerateByModel(minPerArena,llmConfig){
     if(!data.ok) throw new Error(data.error||`HTTP ${res.status}`);
     const scripts=Array.isArray(data.scripts)?data.scripts:[];
     if(!scripts.length) throw new Error("大模型返回空结果");
-    return {ok:true,scripts,model:data.model||"",notes:data.notes||""};
+    onStage(`AI返回成功：${scripts.length}行`);
+    return {ok:true,scripts,model:data.model||"",notes:data.notes||"",raw:data,debug:Array.isArray(data.debug)?data.debug:[]};
   }catch(err){
+    onStage(`AI请求失败：${err.message||err}`,true);
     console.error("[AI-ERR] /api/generate-script-ai",err);
     return {ok:false,error:err.message||"大模型生成失败"};
   }
@@ -1125,50 +1402,80 @@ async function onAutoGenerateScripts(){
     toast("数据未加载完成，请先点“重新读取表”",true);
     return;
   }
-  let generatedResult;
+  const requestPayload={minPerArena,llmConfig:llmCfg};
+  state.aiReview.minPerArena=minPerArena;
+  openAIReviewDialog();
+  resetAIReviewDialog(requestPayload);
+  setAIReviewBusy(true);
+  pushAIStatus(`启动智能生成（mode=${mode}, minPerArena=${minPerArena}）`);
+
+  let generatedResult={scripts:[],issues:[]};
   let sourceTag="smart-rule";
-  const runLocal=()=>{generatedResult=generateScriptsForAllArenas(minPerArena);sourceTag="smart-rule";};
+  const runLocal=(reasonText)=>{
+    if(reasonText) pushAIStatus(reasonText,true);
+    generatedResult=generateScriptsForAllArenas(minPerArena);
+    sourceTag="smart-rule";
+    pushAIStatus(`本地算法生成完成：${(generatedResult.scripts||[]).length}行`);
+  };
+
   if(mode==="local"){
-    runLocal();
-    toast("已使用本地算法生成");
+    runLocal("当前为仅本地模式，未调用AI。");
   }else{
-    const aiResult=await tryGenerateByModel(minPerArena,llmCfg);
+    const aiResult=await tryGenerateByModel(minPerArena,llmCfg,{
+      onStage:(msg,isWarn)=>pushAIStatus(msg,isWarn),
+      onResponse:(payload,status)=>{
+        pushAIStatus(`服务端响应：HTTP ${status}`);
+        setReviewRawResponse(payload);
+      },
+      onDebug:(item)=>{
+        if(!item||typeof item!=="object") return;
+        const title=String(item.title||"untitled");
+        if(title.includes("exception")||title.includes("error")||title.includes("timeout")) pushAIStatus(`debug: ${title}`,true);
+      }
+    });
     if(aiResult.ok){
       generatedResult={scripts:(aiResult.scripts||[]),issues:[]};
       sourceTag=`llm:${aiResult.model||"unknown"}`;
-      if(aiResult.notes) toast(`大模型生成完成：${aiResult.notes}`);
+      if(aiResult.notes) pushAIStatus(`AI说明：${aiResult.notes}`);
     }else if(mode==="auto"){
-      runLocal();
-      toast(`大模型不可用，已回退本地算法：${aiResult.error}`,true);
+      runLocal(`AI不可用，回退本地算法：${aiResult.error}`);
     }else{
+      setAIStatusBadge("AI失败",true);
+      setAIValidateMessage(`AI生成失败：${aiResult.error}`,true);
+      setAIReviewBusy(false);
       toast(`仅大模型模式失败：${aiResult.error}`,true);
       return;
     }
   }
+
   const generated=generatedResult.scripts||[];
   if(!generated.length){
     const reason=(generatedResult.issues||[]).slice(0,2).join("；");
+    setAIStatusBadge("生成失败",true);
+    setAIValidateMessage(`自动生成失败：${reason||"当前配置不足"}`,true);
+    setAIReviewBusy(false);
     toast(`自动生成失败：${reason||"当前配置不足"}`,true);
     return;
   }
-  if((generatedResult.issues||[]).length){
-    toast(`部分渔场跳过：${generatedResult.issues[0]}`,true);
-  }
-  const msg=`将替换当前脚本为智能生成结果（每场至少${minPerArena}套，共${generated.length}行）。是否继续？`;
-  if(!window.confirm(msg)) return;
-  state.scripts=generated;
-  renderScriptTable();
-  renderTimeline();
-  renderGenerateReport(generated);
-  toast(`已自动生成 ${generated.length} 行脚本`);
 
-  const autoName=`自动生成_${new Date().toISOString().replace(/[:T]/g,"-").slice(0,16)}`;
-  try{
-    const data=await postJson("/api/preset/save",{name:autoName,scripts:state.scripts,meta:{source:sourceTag,minPerArena}});
-    await loadPresetList(data.name);
-  }catch(err){
-    toast(`自动方案保存失败: ${err.message}`,true);
+  if((generatedResult.issues||[]).length){
+    pushAIStatus(`部分渔场被跳过：${generatedResult.issues[0]}`,true);
   }
+  if(!state.aiReview.lastResponse){
+    setReviewRawResponse({ok:true,source:sourceTag,rows:generated.length,issues:generatedResult.issues||[]});
+  }
+  state.aiReview.sourceTag=sourceTag;
+  state.aiReview.candidateScripts=generated;
+  setReviewEditorPayload({scripts:generated});
+  const checked=validateReviewEditor(false);
+  if(checked.ok){
+    setAIStatusBadge("已生成，待确认使用",false);
+    pushAIStatus(`JSON识别成功：${generated.length}行，请检查后点击“确认使用”。`);
+  }else{
+    setAIStatusBadge("待手工修正JSON",true);
+    pushAIStatus(`JSON识别失败：${checked.error}`,true);
+  }
+  setAIReviewBusy(false);
 }
 
 async function saveScripts(outputFile){

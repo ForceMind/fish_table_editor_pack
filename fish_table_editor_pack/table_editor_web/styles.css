@@ -700,6 +700,109 @@ dialog::backdrop {
   align-items: center;
 }
 
+.ai-review-dialog {
+  width: min(1180px, 96vw);
+}
+
+.ai-review-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.ai-review-card {
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fbfdff;
+  min-height: 0;
+}
+
+.ai-review-card h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #29415f;
+}
+
+.ai-status-badge {
+  display: inline-block;
+  border: 1px solid #9fc2de;
+  border-radius: 999px;
+  background: #e9f4ff;
+  color: #244b73;
+  font-size: 12px;
+  padding: 2px 10px;
+  margin-bottom: 6px;
+}
+
+.ai-status-badge.warn {
+  border-color: #e5b7bf;
+  background: #fff1f3;
+  color: #8d2230;
+}
+
+.ai-status-log {
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #fff;
+  height: 220px;
+  overflow: auto;
+  padding: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: Consolas, "Courier New", monospace;
+}
+
+.ai-status-line {
+  margin-bottom: 4px;
+  color: #334155;
+  word-break: break-all;
+}
+
+.ai-status-line.warn {
+  color: #9f1d35;
+}
+
+.ai-json-box {
+  margin: 0;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #fff;
+  min-height: 220px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: Consolas, "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-textarea {
+  width: 100%;
+  min-height: 220px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: Consolas, "Courier New", monospace;
+  resize: vertical;
+}
+
+.ai-validate-ok {
+  color: #0f5132;
+}
+
+.ai-validate-warn {
+  color: #9f1d35;
+}
+
 .picker-list {
   height: 52vh;
   overflow: auto;
@@ -764,5 +867,9 @@ dialog::backdrop {
   }
   .llm-grid {
     grid-template-columns: 1fr;
+  }
+  .ai-review-grid {
+    grid-template-columns: 1fr;
+    max-height: 76vh;
   }
 }
