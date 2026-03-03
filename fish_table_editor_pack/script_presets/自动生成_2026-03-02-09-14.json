@@ -1,0 +1,855 @@
+{
+  "name": "自动生成_2026-03-02-09-14",
+  "createdAt": "2026-03-02T17:14:57",
+  "rows": 48,
+  "meta": {
+    "source": "smart-rule",
+    "minPerArena": 6
+  },
+  "scripts": [
+    {
+      "scriptId": 258,
+      "groupIds": [
+        9,
+        10,
+        1,
+        13,
+        5,
+        25,
+        7
+      ],
+      "gapTimeMs": 3600,
+      "arenaIds": [
+        1
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 259,
+      "groupIds": [
+        4,
+        3,
+        19,
+        2,
+        17,
+        21,
+        16
+      ],
+      "gapTimeMs": 3300,
+      "arenaIds": [
+        1
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 260,
+      "groupIds": [
+        11,
+        18,
+        12,
+        8,
+        22,
+        14,
+        19,
+        26,
+        145
+      ],
+      "gapTimeMs": 2900,
+      "arenaIds": [
+        1
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 261,
+      "groupIds": [
+        12,
+        4,
+        11,
+        6,
+        24,
+        20,
+        3,
+        34,
+        48
+      ],
+      "gapTimeMs": 2700,
+      "arenaIds": [
+        1
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 262,
+      "groupIds": [
+        10,
+        1,
+        23,
+        37,
+        15,
+        32,
+        13,
+        145,
+        45
+      ],
+      "gapTimeMs": 2400,
+      "arenaIds": [
+        1
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 263,
+      "groupIds": [
+        17,
+        14,
+        24,
+        40,
+        48,
+        9,
+        46,
+        38
+      ],
+      "gapTimeMs": 2200,
+      "arenaIds": [
+        1
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 264,
+      "groupIds": [
+        2,
+        8,
+        23,
+        148,
+        48,
+        18,
+        28,
+        29
+      ],
+      "gapTimeMs": 2100,
+      "arenaIds": [
+        1
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 265,
+      "groupIds": [
+        5,
+        25,
+        16,
+        33,
+        160,
+        47,
+        40
+      ],
+      "gapTimeMs": 1900,
+      "arenaIds": [
+        1
+      ],
+      "type": 2
+    },
+    {
+      "scriptId": 266,
+      "groupIds": [
+        193,
+        197,
+        182,
+        191,
+        198,
+        187,
+        194
+      ],
+      "gapTimeMs": 3600,
+      "arenaIds": [
+        2
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 267,
+      "groupIds": [
+        199,
+        185,
+        181,
+        189,
+        184,
+        201,
+        195
+      ],
+      "gapTimeMs": 3300,
+      "arenaIds": [
+        2
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 268,
+      "groupIds": [
+        192,
+        183,
+        190,
+        204,
+        200,
+        193,
+        206,
+        209
+      ],
+      "gapTimeMs": 2900,
+      "arenaIds": [
+        2
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 269,
+      "groupIds": [
+        190,
+        191,
+        183,
+        188,
+        186,
+        189,
+        202,
+        217
+      ],
+      "gapTimeMs": 2700,
+      "arenaIds": [
+        2
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 270,
+      "groupIds": [
+        192,
+        182,
+        203,
+        205,
+        196,
+        197,
+        216,
+        215
+      ],
+      "gapTimeMs": 2400,
+      "arenaIds": [
+        2
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 271,
+      "groupIds": [
+        199,
+        205,
+        196,
+        208,
+        185,
+        220,
+        211
+      ],
+      "gapTimeMs": 2200,
+      "arenaIds": [
+        2
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 272,
+      "groupIds": [
+        184,
+        195,
+        200,
+        210,
+        181,
+        207,
+        219
+      ],
+      "gapTimeMs": 2100,
+      "arenaIds": [
+        2
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 273,
+      "groupIds": [
+        198,
+        203,
+        204,
+        212,
+        340,
+        214,
+        213
+      ],
+      "gapTimeMs": 1900,
+      "arenaIds": [
+        2
+      ],
+      "type": 2
+    },
+    {
+      "scriptId": 274,
+      "groupIds": [
+        356,
+        366,
+        359,
+        352,
+        349,
+        367,
+        372
+      ],
+      "gapTimeMs": 3600,
+      "arenaIds": [
+        3
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 275,
+      "groupIds": [
+        350,
+        351,
+        365,
+        348,
+        364,
+        354,
+        368
+      ],
+      "gapTimeMs": 3300,
+      "arenaIds": [
+        3
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 276,
+      "groupIds": [
+        360,
+        357,
+        358,
+        363,
+        384,
+        349,
+        370,
+        388
+      ],
+      "gapTimeMs": 2900,
+      "arenaIds": [
+        3
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 277,
+      "groupIds": [
+        359,
+        365,
+        351,
+        353,
+        362,
+        348,
+        355,
+        380
+      ],
+      "gapTimeMs": 2700,
+      "arenaIds": [
+        3
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 278,
+      "groupIds": [
+        357,
+        360,
+        369,
+        385,
+        371,
+        356,
+        379,
+        381
+      ],
+      "gapTimeMs": 2400,
+      "arenaIds": [
+        3
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 279,
+      "groupIds": [
+        350,
+        361,
+        372,
+        387,
+        364,
+        389,
+        378
+      ],
+      "gapTimeMs": 2200,
+      "arenaIds": [
+        3
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 280,
+      "groupIds": [
+        352,
+        369,
+        354,
+        375,
+        358,
+        374,
+        382
+      ],
+      "gapTimeMs": 2100,
+      "arenaIds": [
+        3
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 281,
+      "groupIds": [
+        366,
+        355,
+        371,
+        373,
+        513,
+        383,
+        386
+      ],
+      "gapTimeMs": 1900,
+      "arenaIds": [
+        3
+      ],
+      "type": 2
+    },
+    {
+      "scriptId": 282,
+      "groupIds": [
+        3,
+        2,
+        9,
+        19,
+        10,
+        8,
+        16
+      ],
+      "gapTimeMs": 3600,
+      "arenaIds": [
+        4
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 283,
+      "groupIds": [
+        1,
+        13,
+        4,
+        17,
+        11,
+        24,
+        21
+      ],
+      "gapTimeMs": 3300,
+      "arenaIds": [
+        4
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 284,
+      "groupIds": [
+        5,
+        12,
+        18,
+        6,
+        14,
+        25,
+        17,
+        47,
+        145
+      ],
+      "gapTimeMs": 2900,
+      "arenaIds": [
+        4
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 285,
+      "groupIds": [
+        12,
+        18,
+        3,
+        7,
+        20,
+        23,
+        9,
+        29,
+        48
+      ],
+      "gapTimeMs": 2700,
+      "arenaIds": [
+        4
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 286,
+      "groupIds": [
+        11,
+        19,
+        37,
+        22,
+        15,
+        46,
+        5,
+        145,
+        45
+      ],
+      "gapTimeMs": 2400,
+      "arenaIds": [
+        4
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 287,
+      "groupIds": [
+        2,
+        21,
+        16,
+        26,
+        48,
+        4,
+        34,
+        38
+      ],
+      "gapTimeMs": 2200,
+      "arenaIds": [
+        4
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 288,
+      "groupIds": [
+        13,
+        25,
+        14,
+        40,
+        145,
+        10,
+        28,
+        33
+      ],
+      "gapTimeMs": 2100,
+      "arenaIds": [
+        4
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 289,
+      "groupIds": [
+        1,
+        23,
+        22,
+        32,
+        160,
+        148,
+        47
+      ],
+      "gapTimeMs": 1900,
+      "arenaIds": [
+        4
+      ],
+      "type": 2
+    },
+    {
+      "scriptId": 290,
+      "groupIds": [
+        197,
+        189,
+        185,
+        193,
+        198,
+        205,
+        188
+      ],
+      "gapTimeMs": 3600,
+      "arenaIds": [
+        5
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 291,
+      "groupIds": [
+        192,
+        182,
+        190,
+        183,
+        181,
+        206,
+        196
+      ],
+      "gapTimeMs": 3300,
+      "arenaIds": [
+        5
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 292,
+      "groupIds": [
+        200,
+        199,
+        191,
+        194,
+        184,
+        189,
+        202,
+        213
+      ],
+      "gapTimeMs": 2900,
+      "arenaIds": [
+        5
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 293,
+      "groupIds": [
+        191,
+        199,
+        198,
+        203,
+        187,
+        181,
+        201,
+        216
+      ],
+      "gapTimeMs": 2700,
+      "arenaIds": [
+        5
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 294,
+      "groupIds": [
+        193,
+        185,
+        204,
+        195,
+        186,
+        200,
+        208,
+        220
+      ],
+      "gapTimeMs": 2400,
+      "arenaIds": [
+        5
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 295,
+      "groupIds": [
+        197,
+        186,
+        188,
+        217,
+        192,
+        211,
+        214
+      ],
+      "gapTimeMs": 2200,
+      "arenaIds": [
+        5
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 296,
+      "groupIds": [
+        190,
+        201,
+        184,
+        207,
+        183,
+        219,
+        209
+      ],
+      "gapTimeMs": 2100,
+      "arenaIds": [
+        5
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 297,
+      "groupIds": [
+        182,
+        195,
+        203,
+        218,
+        340,
+        215,
+        212
+      ],
+      "gapTimeMs": 1900,
+      "arenaIds": [
+        5
+      ],
+      "type": 2
+    },
+    {
+      "scriptId": 298,
+      "groupIds": [
+        351,
+        367,
+        360,
+        358,
+        350,
+        370,
+        369
+      ],
+      "gapTimeMs": 3600,
+      "arenaIds": [
+        6
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 299,
+      "groupIds": [
+        348,
+        349,
+        366,
+        356,
+        357,
+        355,
+        362
+      ],
+      "gapTimeMs": 3300,
+      "arenaIds": [
+        6
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 300,
+      "groupIds": [
+        365,
+        364,
+        359,
+        363,
+        354,
+        358,
+        361,
+        376
+      ],
+      "gapTimeMs": 2900,
+      "arenaIds": [
+        6
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 301,
+      "groupIds": [
+        364,
+        349,
+        351,
+        353,
+        371,
+        357,
+        372,
+        387
+      ],
+      "gapTimeMs": 2700,
+      "arenaIds": [
+        6
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 302,
+      "groupIds": [
+        350,
+        365,
+        384,
+        373,
+        352,
+        359,
+        383,
+        388
+      ],
+      "gapTimeMs": 2400,
+      "arenaIds": [
+        6
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 303,
+      "groupIds": [
+        367,
+        368,
+        369,
+        389,
+        366,
+        380,
+        382
+      ],
+      "gapTimeMs": 2200,
+      "arenaIds": [
+        6
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 304,
+      "groupIds": [
+        356,
+        362,
+        384,
+        374,
+        360,
+        381,
+        378
+      ],
+      "gapTimeMs": 2100,
+      "arenaIds": [
+        6
+      ],
+      "type": 1
+    },
+    {
+      "scriptId": 305,
+      "groupIds": [
+        348,
+        371,
+        352,
+        375,
+        513,
+        386,
+        385
+      ],
+      "gapTimeMs": 1900,
+      "arenaIds": [
+        6
+      ],
+      "type": 2
+    }
+  ]
+}

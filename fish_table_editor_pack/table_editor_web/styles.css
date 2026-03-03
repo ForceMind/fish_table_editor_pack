@@ -707,10 +707,14 @@ dialog::backdrop {
 .ai-review-grid {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(240px, 0.95fr) minmax(260px, 1.1fr) minmax(520px, 3fr);
+  grid-template-areas:
+    "status raw edit"
+    "request raw edit";
   gap: 10px;
   max-height: 70vh;
   overflow: auto;
+  align-items: stretch;
 }
 
 .ai-review-card {
@@ -795,6 +799,25 @@ dialog::backdrop {
   resize: vertical;
 }
 
+.ai-card-status { grid-area: status; }
+.ai-card-request { grid-area: request; }
+.ai-card-raw { grid-area: raw; }
+.ai-card-edit { grid-area: edit; }
+
+.ai-card-status .ai-status-log,
+.ai-card-request .ai-json-box {
+  min-height: 170px;
+  max-height: 250px;
+}
+
+.ai-card-raw .ai-textarea {
+  min-height: 360px;
+}
+
+.ai-card-edit .ai-textarea {
+  min-height: 500px;
+}
+
 .ai-validate-ok {
   color: #0f5132;
 }
@@ -869,7 +892,25 @@ dialog::backdrop {
     grid-template-columns: 1fr;
   }
   .ai-review-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1.6fr;
+    grid-template-areas:
+      "status edit"
+      "request edit"
+      "raw edit";
     max-height: 76vh;
+  }
+}
+
+@media (max-width: 760px) {
+  .ai-review-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "status"
+      "request"
+      "raw"
+      "edit";
+  }
+  .ai-card-edit .ai-textarea {
+    min-height: 340px;
   }
 }

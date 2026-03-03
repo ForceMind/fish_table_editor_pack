@@ -9,7 +9,7 @@ const state={
   llmConfig:{mode:"auto",minPerArena:6,baseUrl:"https://api.openai.com/v1",model:"gpt-4.1-mini",apiKey:"",temperature:0.2,maxTokens:2048},
   timelineScale:{pxPerMs:0.005,baseX:70},
   gapDrag:{active:false,scriptIndex:-1,startX:0,startGapMs:0,pxPerMs:0.005},
-  aiReview:{busy:false,candidateScripts:[],validatedScripts:[],sourceTag:"",minPerArena:6,lastRequest:null,lastResponse:null}
+  aiReview:{busy:false,candidateScripts:[],validatedScripts:[],sourceTag:"",minPerArena:6,lastRequest:null,lastResponse:null,debugItems:[]}
 };
 
 const els={
@@ -31,7 +31,8 @@ const els={
   aiStatusLog:document.getElementById("ai-status-log"),aiRequestJson:document.getElementById("ai-request-json"),
   aiRawJson:document.getElementById("ai-raw-json"),aiEditJson:document.getElementById("ai-edit-json"),
   aiValidateMsg:document.getElementById("ai-validate-msg"),aiValidateBtn:document.getElementById("ai-validate-btn"),
-  aiFormatBtn:document.getElementById("ai-format-btn"),aiApplyBtn:document.getElementById("ai-apply-btn")
+  aiFormatBtn:document.getElementById("ai-format-btn"),aiApplyBtn:document.getElementById("ai-apply-btn"),
+  aiRegenerateBtn:document.getElementById("ai-regenerate-btn")
 };
 
 bindEvents();
@@ -97,6 +98,10 @@ function bindEvents(){
   if(els.aiValidateBtn) els.aiValidateBtn.addEventListener("click",()=>validateReviewEditor(true));
   if(els.aiFormatBtn) els.aiFormatBtn.addEventListener("click",formatReviewEditorJson);
   if(els.aiApplyBtn) els.aiApplyBtn.addEventListener("click",applyReviewScripts);
+  if(els.aiRegenerateBtn) els.aiRegenerateBtn.addEventListener("click",()=>{
+    pushAIStatus("手动触发重新生成...");
+    onAutoGenerateScripts("manual-regenerate");
+  });
   if(els.aiEditJson) els.aiEditJson.addEventListener("input",()=>{
     if(els.aiApplyBtn) els.aiApplyBtn.disabled=true;
     state.aiReview.validatedScripts=[];
@@ -151,7 +156,7 @@ function readLLMConfigFromInputs(){
     model:(els.llmModel?.value||"gpt-4.1-mini").trim(),
     apiKey:(els.llmApiKey?.value||"").trim(),
     temperature:clampNum(els.llmTemperature?.value,0,1,0.2),
-    maxTokens:Math.round(clampNum(els.llmMaxTokens?.value,512,8192,2048))
+    maxTokens:Math.round(clampNum(els.llmMaxTokens?.value,512,131072,2048))
   };
 }
 
@@ -162,7 +167,7 @@ function applyLLMConfigToInputs(){
   if(els.llmModel) els.llmModel.value=state.llmConfig.model||"gpt-4.1-mini";
   if(els.llmApiKey) els.llmApiKey.value=state.llmConfig.apiKey||"";
   if(els.llmTemperature) els.llmTemperature.value=String(state.llmConfig.temperature??0.2);
-  if(els.llmMaxTokens) els.llmMaxTokens.value=String(Math.round(clampNum(state.llmConfig.maxTokens,512,8192,2048)));
+  if(els.llmMaxTokens) els.llmMaxTokens.value=String(Math.round(clampNum(state.llmConfig.maxTokens,512,131072,2048)));
 }
 
 function saveLLMConfig(showToast){
@@ -185,7 +190,7 @@ function getLLMRequestConfig(){
     model:(state.llmConfig.model||"gpt-4.1-mini").trim(),
     apiKey:(state.llmConfig.apiKey||"").trim(),
     temperature:clampNum(state.llmConfig.temperature,0,1,0.2),
-    maxTokens:Math.round(clampNum(state.llmConfig.maxTokens,512,8192,2048))
+    maxTokens:Math.round(clampNum(state.llmConfig.maxTokens,512,131072,2048))
   };
 }
 
@@ -290,8 +295,9 @@ function resetAIReviewDialog(requestPayload){
   state.aiReview.sourceTag="";
   state.aiReview.lastRequest=requestPayload||null;
   state.aiReview.lastResponse=null;
+  state.aiReview.debugItems=[];
   if(els.aiStatusLog) els.aiStatusLog.innerHTML="";
-  if(els.aiRequestJson) els.aiRequestJson.textContent=requestPayload?JSON.stringify(requestPayload,null,2):"";
+  refreshAIRequestPreview();
   if(els.aiRawJson) els.aiRawJson.value="";
   if(els.aiEditJson) els.aiEditJson.value="";
   if(els.aiApplyBtn) els.aiApplyBtn.disabled=true;
@@ -299,8 +305,131 @@ function resetAIReviewDialog(requestPayload){
   setAIValidateMessage("等待结果。",false);
 }
 
+function maskApiKey(value){
+  const key=String(value||"").trim();
+  if(!key) return "";
+  return key.length>=4?`***${key.slice(-4)}`:"***";
+}
+
+function buildAISystemPromptPreview(){
+  return [
+    "你是资深捕鱼策划，需要输出可落地的脚本编排JSON。",
+    "目标：让对局有节奏、有波峰、有缓冲，且满足工程约束。",
+    "硬约束：",
+    "1) 每个arena至少minScripts条；",
+    "2) 只可使用该arena提供的groups id，不可发明新id；",
+    "3) 每个arena Boss恰好出现1次；且必须在该arena最后一条脚本的后半段（不要求最后一个）；",
+    "4) 赔率节奏：前期低赔率占优，中期均衡，后期高赔率占优；",
+    "5) gapTimeMs要随阶段逐步收紧，整体呈加压感；",
+    "6) scriptId从startScriptId开始全局递增且唯一；type规则：若该行含Boss组则type=2，否则type=1。",
+    "风格要求：不要机械重复同一组，避免连续多条都高赔率轰炸，保证可玩性。",
+    "输出格式要求：只输出一个合法JSON对象；不要markdown，不要代码块，不要注释。",
+    "输出只允许一个JSON对象，结构：",
+    "{\"scripts\":[{\"scriptId\":123,\"gapTimeMs\":2600,\"arenaIds\":[1],\"type\":1,\"groupIds\":[1,2,3]}],\"notes\":\"一句话说明策略\"}"
+  ].join("");
+}
+
+function buildSafeRequestPayload(minPerArena,llmCfg,requestId){
+  const safeCfg={...(llmCfg||{})};
+  if(Object.prototype.hasOwnProperty.call(safeCfg,"apiKey")) safeCfg.apiKey=maskApiKey(safeCfg.apiKey);
+  return {
+    requestId:requestId||`req-${Date.now()}`,
+    requestedAt:new Date().toISOString(),
+    minPerArena,
+    llmConfig:safeCfg,
+    systemPromptPreview:buildAISystemPromptPreview()
+  };
+}
+
+function dedupeByString(values){
+  const out=[];
+  const seen=new Set();
+  for(const item of Array.isArray(values)?values:[]){
+    const key=typeof item==="string"?item:JSON.stringify(item);
+    if(seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function parseJsonLoose(text){
+  const raw=String(text||"").trim();
+  if(!raw) return null;
+  try{return JSON.parse(raw);}catch(_e){return null;}
+}
+
+function extractFirstAttemptUserPayload(attempts){
+  const firstAttempt=(Array.isArray(attempts)?attempts:[]).find(x=>String(x?.title||"").includes("first-attempt"))||(Array.isArray(attempts)?attempts[0]:null);
+  const body=firstAttempt?.body;
+  if(!body||typeof body!=="object") return {attempt:firstAttempt||null,userPayload:null};
+  const messages=Array.isArray(body.messages)?body.messages:[];
+  const userMsg=messages.find(msg=>msg&&msg.role==="user");
+  const userContent=(userMsg&&typeof userMsg.content!=="undefined")?userMsg.content:"";
+  const parsed=typeof userContent==="string"?parseJsonLoose(userContent):userContent;
+  return {attempt:firstAttempt||null,userPayload:parsed||userContent||null};
+}
+
+function buildLocalBaseDataSnapshot(){
+  return {
+    arenas:{count:state.arenas.length,sample:state.arenas.slice(0,3).map(a=>({id:a.id,name:a.name}))},
+    groups:{count:state.groups.length,sample:state.groups.slice(0,5).map(g=>({id:g.id,avgPayout:g.avgPayout,hasBoss:Boolean(g.hasBoss),hasSkill:Boolean(g.hasSkill)}))},
+    fish:{count:state.fish.length},
+    routes:{count:state.routes.length},
+    scripts:{count:state.scripts.length,sample:state.scripts.slice(0,3).map(s=>({scriptId:s.scriptId,arenaIds:parseIds(s.arenaIds),groupIds:parseIds(s.groupIds).slice(0,8)}))}
+  };
+}
+
+function extractRequestDebug(debugItems){
+  const endpoint=[];
+  const prompt=[];
+  const attempts=[];
+  let generationContext=null;
+  const arenaContexts=[];
+  for(const item of Array.isArray(debugItems)?debugItems:[]){
+    if(!item||typeof item!=="object") continue;
+    const title=String(item.title||"");
+    if(title.includes("AI endpoint")) endpoint.push(item.content);
+    if(title.includes("AI system prompt")) prompt.push(item.content);
+    if(title.includes("AI request payload")) attempts.push({title,body:item.content});
+    if(title==="AI generation context") generationContext=item.content;
+    if(title.startsWith("AI arena context[")) arenaContexts.push({title,context:item.content});
+  }
+  return {
+    endpoint:dedupeByString(endpoint),
+    prompt:dedupeByString(prompt),
+    attempts,
+    generationContext,
+    arenaContexts
+  };
+}
+
+function refreshAIRequestPreview(){
+  if(!els.aiRequestJson) return;
+  const details=extractRequestDebug(state.aiReview.debugItems);
+  const fallbackPrompt=state.aiReview.lastRequest?.systemPromptPreview||"";
+  const promptText=(details.prompt&&details.prompt.length)?details.prompt[0]:fallbackPrompt;
+  const attemptDetail=extractFirstAttemptUserPayload(details.attempts);
+  const payload={
+    clientRequest:state.aiReview.lastRequest||null,
+    localBaseDataSnapshot:buildLocalBaseDataSnapshot(),
+    serverContextBuilt:{
+      generationContext:details.generationContext,
+      arenaContexts:details.arenaContexts
+    },
+    openaiRequest:{
+      endpoint:(details.endpoint&&details.endpoint.length)?details.endpoint[0]:null,
+      systemPrompt:promptText,
+      firstAttemptBody:attemptDetail.attempt?.body||null,
+      firstAttemptUserPayload:attemptDetail.userPayload
+    }
+  };
+  els.aiRequestJson.textContent=JSON.stringify(payload,null,2);
+}
+
 function setAIReviewBusy(busy){
   state.aiReview.busy=Boolean(busy);
+  if(els.aiRegenerateBtn) els.aiRegenerateBtn.disabled=state.aiReview.busy;
   if(els.aiValidateBtn) els.aiValidateBtn.disabled=state.aiReview.busy;
   if(els.aiFormatBtn) els.aiFormatBtn.disabled=state.aiReview.busy;
   if(els.aiApplyBtn) els.aiApplyBtn.disabled=state.aiReview.busy||!state.aiReview.validatedScripts.length;
@@ -1187,6 +1316,54 @@ function pickBalancedFromPool(pool,count,usedInScript,usageMap,cursorMap,cursorK
   return out;
 }
 
+function createSeededRng(seed){
+  let t=(Number(seed)||0)>>>0;
+  return ()=>{
+    t+=0x6D2B79F5;
+    let v=Math.imul(t^(t>>>15),1|t);
+    v^=v+Math.imul(v^(v>>>7),61|v);
+    return ((v^(v>>>14))>>>0)/4294967296;
+  };
+}
+
+function randomInt(rng,min,max){
+  if(max<=min) return min;
+  const r=typeof rng==="function"?rng():Math.random();
+  return min+Math.floor(r*(max-min+1));
+}
+
+function shuffleArray(arr,rng){
+  const out=arr.slice();
+  for(let i=out.length-1;i>0;i--){
+    const j=randomInt(rng,0,i);
+    const tmp=out[i];
+    out[i]=out[j];
+    out[j]=tmp;
+  }
+  return out;
+}
+
+function pickBalancedFromPoolWithRng(pool,count,usedInScript,usageMap,cursorMap,cursorKey,rng){
+  const out=[];
+  if(!pool.length||count<=0) return out;
+  for(let i=0;i<count;i++){
+    let candidates=pool.filter(g=>!usedInScript.has(g.id));
+    if(!candidates.length) candidates=pool.slice();
+    const minUse=Math.min(...candidates.map(g=>usageMap.get(g.id)||0));
+    const leastUsed=shuffleArray(
+      candidates.filter(g=>(usageMap.get(g.id)||0)===minUse).sort((a,b)=>a.id-b.id),
+      rng
+    );
+    const cursor=cursorMap.get(cursorKey)||0;
+    const chosen=leastUsed[cursor%leastUsed.length];
+    cursorMap.set(cursorKey,cursor+1);
+    out.push(chosen);
+    usageMap.set(chosen.id,(usageMap.get(chosen.id)||0)+1);
+    usedInScript.add(chosen.id);
+  }
+  return out;
+}
+
 function pickSingleDeterministic(pool,usedInScript,usageMap,cursorMap,key,banned){
   if(!pool.length) return null;
   const bannedSet=new Set(banned||[]);
@@ -1203,10 +1380,29 @@ function pickSingleDeterministic(pool,usedInScript,usageMap,cursorMap,key,banned
   return chosen;
 }
 
+function pickSingleWithRng(pool,usedInScript,usageMap,cursorMap,key,banned,rng){
+  if(!pool.length) return null;
+  const bannedSet=new Set(banned||[]);
+  let candidates=pool.filter(g=>!usedInScript.has(g.id)&&!bannedSet.has(g.id));
+  if(!candidates.length) candidates=pool.filter(g=>!bannedSet.has(g.id));
+  if(!candidates.length) candidates=pool.slice();
+  const minUse=Math.min(...candidates.map(g=>usageMap.get(g.id)||0));
+  const leastUsed=shuffleArray(
+    candidates.filter(g=>(usageMap.get(g.id)||0)===minUse).sort((a,b)=>a.id-b.id),
+    rng
+  );
+  const cursor=cursorMap.get(key)||0;
+  const chosen=leastUsed[cursor%leastUsed.length];
+  cursorMap.set(key,cursor+1);
+  usageMap.set(chosen.id,(usageMap.get(chosen.id)||0)+1);
+  usedInScript.add(chosen.id);
+  return chosen;
+}
+
 function buildStagePattern(index,total){
   const p=total<=1?1:index/(total-1);
-  if(p<0.2) return {low:4,mid:2,high:0};
-  if(p<0.45) return {low:3,mid:3,high:1};
+  if(p<0.2) return {low:3,mid:2,high:1};
+  if(p<0.45) return {low:3,mid:2,high:2};
   if(p<0.7) return {low:2,mid:3,high:2};
   return {low:1,mid:2,high:3};
 }
@@ -1227,19 +1423,147 @@ function buildGapMs(index,total){
   return Math.round((2200-(x*300))/100)*100;
 }
 
-function generateScriptsForAllArenas(minPerArena){
+function estimateGroupDurationMs(groupId){
+  const g=state.groupMap.get(groupId);
+  if(!g) return 2500;
+  const avgSec=num(g.avgRouteTime,0);
+  if(avgSec>0) return clamp(Math.round(avgSec*1000),1000,12000);
+  const routeTimes=Array.isArray(g.routeTimes)?g.routeTimes.map(x=>Number(x)||0).filter(x=>x>0):[];
+  if(routeTimes.length){
+    const maxSec=Math.max(...routeTimes);
+    return clamp(Math.round(maxSec*1000),1000,12000);
+  }
+  return 2500;
+}
+
+function calcMaxConcurrentFish(groupIds,gapMs){
+  const ids=Array.isArray(groupIds)?groupIds:[];
+  if(!ids.length) return 0;
+  const events=[];
+  for(let i=0;i<ids.length;i++){
+    const gid=ids[i];
+    const g=state.groupMap.get(gid);
+    const fishCount=Math.max(1,groupFishCount(g));
+    const start=i*Math.max(0,num(gapMs,0));
+    const end=start+estimateGroupDurationMs(gid);
+    events.push({t:start,delta:+fishCount});
+    events.push({t:end,delta:-fishCount});
+  }
+  events.sort((a,b)=>a.t===b.t?a.delta-b.delta:a.t-b.t);
+  let current=0;
+  let peak=0;
+  for(const e of events){
+    current+=e.delta;
+    if(current>peak) peak=current;
+  }
+  return peak;
+}
+
+function groupAvgPayoutById(groupId){
+  const g=state.groupMap.get(groupId);
+  return num(g?.avgPayout,0);
+}
+
+function ensureLowHighCombo(seq,lowPool,high20Pool,normalPool,usageMap,cursorMap,keyPrefix,rng,bossGroupId){
+  let out=(Array.isArray(seq)?seq:[]).slice();
+  const used=new Set(out);
+  const fallbackHigh=normalPool.slice().sort((a,b)=>num(b.avgPayout,0)-num(a.avgPayout,0));
+  const highSource=high20Pool.length?high20Pool:fallbackHigh;
+
+  let keepHighId=out.find(gid=>groupAvgPayoutById(gid)>=20)||0;
+  let keepLowId=out.find(gid=>groupAvgPayoutById(gid)<20&&gid!==bossGroupId)||0;
+
+  if(!keepHighId&&highSource.length){
+    const highPick=pickSingleWithRng(highSource,used,usageMap,cursorMap,`${keyPrefix}-force-high`,[bossGroupId],rng);
+    if(highPick){
+      const pos=Math.max(1,Math.floor(out.length*0.6));
+      out.splice(Math.min(pos,out.length),0,highPick.id);
+      keepHighId=highPick.id;
+    }
+  }
+
+  if(!keepLowId&&lowPool.length){
+    const lowPick=pickSingleWithRng(lowPool,used,usageMap,cursorMap,`${keyPrefix}-force-low`,[bossGroupId],rng);
+    if(lowPick){
+      const pos=Math.min(1,out.length);
+      out.splice(pos,0,lowPick.id);
+      keepLowId=lowPick.id;
+    }
+  }
+
+  return {seq:out,keepHighId,keepLowId};
+}
+
+function ensureBossNotTail(seq,bossGroupId,normalPool,usageMap,cursorMap,keyPrefix,rng){
+  let out=(Array.isArray(seq)?seq:[]).slice();
+  if(!out.includes(bossGroupId)) return out;
+  const nonBossPool=normalPool.filter(g=>g.id!==bossGroupId);
+  const used=new Set(out);
+
+  while(out.length<4&&nonBossPool.length){
+    const pick=pickSingleWithRng(nonBossPool,used,usageMap,cursorMap,`${keyPrefix}-pad-tail`,[bossGroupId],rng);
+    if(!pick) break;
+    out.push(pick.id);
+  }
+
+  let bossIdx=out.indexOf(bossGroupId);
+  if(bossIdx>=out.length-2){
+    out.splice(bossIdx,1);
+    const target=Math.max(1,out.length-3);
+    out.splice(target,0,bossGroupId);
+  }
+
+  while(out.indexOf(bossGroupId)>=out.length-2&&nonBossPool.length){
+    const pick=pickSingleWithRng(nonBossPool,used,usageMap,cursorMap,`${keyPrefix}-append-tail`,[bossGroupId],rng);
+    if(!pick) break;
+    out.push(pick.id);
+  }
+  return out;
+}
+
+function constrainSequenceByFishCap(groupIds,gapMs,maxFish,bossGroupId,mustKeepSet){
+  let seq=(Array.isArray(groupIds)?groupIds:[]).slice();
+  const cap=Math.max(1,num(maxFish,50));
+  const keep=mustKeepSet instanceof Set?mustKeepSet:new Set();
+  for(let guard=0;guard<96;guard++){
+    const peak=calcMaxConcurrentFish(seq,gapMs);
+    if(peak<=cap) break;
+    let removeIdx=-1;
+    let removeFish=-1;
+    for(let i=0;i<seq.length;i++){
+      const gid=seq[i];
+      if(gid===bossGroupId) continue;
+      if(keep.has(gid)) continue;
+      const fish=Math.max(1,groupFishCount(state.groupMap.get(gid)));
+      if(fish>removeFish){
+        removeFish=fish;
+        removeIdx=i;
+      }
+    }
+    if(removeIdx<0) break;
+    seq.splice(removeIdx,1);
+    if(!seq.length) break;
+  }
+  return seq;
+}
+
+function generateScriptsForAllArenas(minPerArena,seedValue){
   if(!state.arenas.length) return {scripts:[],issues:["无可用渔场"]};
 
+  const seed=(Number(seedValue)||Date.now())>>>0;
+  const rng=createSeededRng(seed);
   const bossMap=buildBossGroupMapByArena();
 
   let nextId=state.scripts.reduce((m,r)=>Math.max(m,r.scriptId),0)+1;
   const out=[];
-  const issues=[];
+  const issues=[`seed=${seed}`];
 
   for(const arena of state.arenas){
     const configured=collectConfiguredGroupsForArena(arena.id);
     const bossPool=configured.filter(g=>groupHasBoss(g));
     const normalPool=configured.filter(g=>!groupHasBoss(g));
+    const high20Pool=normalPool.filter(g=>num(g.avgPayout,0)>=20);
+    const lowPool=normalPool.filter(g=>num(g.avgPayout,0)<20);
     if(!configured.length){
       issues.push(`Arena ${arena.id} 未配置任何可用Group`);
       continue;
@@ -1250,6 +1574,14 @@ function generateScriptsForAllArenas(minPerArena){
     }
     if(!normalPool.length){
       issues.push(`Arena ${arena.id} 缺少普通组（只在当前已配置组内生成）`);
+      continue;
+    }
+    if(!high20Pool.length){
+      issues.push(`Arena ${arena.id} 缺少20倍以上高倍率组，无法满足“持续高倍率”要求`);
+      continue;
+    }
+    if(!lowPool.length){
+      issues.push(`Arena ${arena.id} 缺少低倍率组，无法满足“低+高组合”要求`);
       continue;
     }
 
@@ -1271,16 +1603,16 @@ function generateScriptsForAllArenas(minPerArena){
     for(let i=0;i<scriptCount;i++){
       const pattern=buildStagePattern(i,scriptCount);
       const used=new Set();
-      const low=pickBalancedFromPool(payoutBands.low,pattern.low,used,usageMap,cursorMap,`a${arena.id}-low`);
+      const low=pickBalancedFromPoolWithRng(payoutBands.low,pattern.low,used,usageMap,cursorMap,`a${arena.id}-low`,rng);
       const middlePool=payoutBands.mid.length?payoutBands.mid:payoutBands.low;
-      const mid=pickBalancedFromPool(middlePool,pattern.mid,used,usageMap,cursorMap,`a${arena.id}-mid`);
+      const mid=pickBalancedFromPoolWithRng(middlePool,pattern.mid,used,usageMap,cursorMap,`a${arena.id}-mid`,rng);
       const highPool=payoutBands.high.length?payoutBands.high:middlePool;
-      const high=pickBalancedFromPool(highPool,pattern.high,used,usageMap,cursorMap,`a${arena.id}-high`);
+      const high=pickBalancedFromPoolWithRng(highPool,pattern.high,used,usageMap,cursorMap,`a${arena.id}-high`,rng);
       const finalStage=high.map(x=>x.id);
 
       // Mid/Late phase insert one skill group as a pattern breaker.
       if(i>=Math.floor(scriptCount*0.35)&&i<scriptCount-1&&skillPool.length){
-        const skill=pickSingleDeterministic(skillPool,used,usageMap,cursorMap,`a${arena.id}-skill`,[prevTail,prevHead]);
+        const skill=pickSingleWithRng(skillPool,used,usageMap,cursorMap,`a${arena.id}-skill`,[prevTail,prevHead],rng);
         if(skill){
           const pos=Math.max(1,Math.floor(finalStage.length/2));
           finalStage.splice(pos,0,skill.id);
@@ -1297,7 +1629,7 @@ function generateScriptsForAllArenas(minPerArena){
 
       // Add a relief low-payout group before final stage in non-ending scripts.
       if(i<scriptCount-1&&seq.length>=4){
-        const relief=pickSingleDeterministic(payoutBands.low,used,usageMap,cursorMap,`a${arena.id}-relief`,[prevTail,prevHead]);
+        const relief=pickSingleWithRng(payoutBands.low,used,usageMap,cursorMap,`a${arena.id}-relief`,[prevTail,prevHead],rng);
         if(relief){
           const reliefPos=Math.max(2,seq.length-2);
           seq.splice(reliefPos,0,relief.id);
@@ -1306,11 +1638,11 @@ function generateScriptsForAllArenas(minPerArena){
 
       // Avoid repeated head/tail and long high-payout streaks.
       if(seq.length&&seq[0]===prevHead){
-        const alt=pickSingleDeterministic(payoutBands.low,used,usageMap,cursorMap,`a${arena.id}-alt-head`,[seq[0],prevTail]);
+        const alt=pickSingleWithRng(payoutBands.low,used,usageMap,cursorMap,`a${arena.id}-alt-head`,[seq[0],prevTail],rng);
         if(alt) seq[0]=alt.id;
       }
       if(seq.length>2&&seq[seq.length-1]===prevTail&&i<scriptCount-1){
-        const altTail=pickSingleDeterministic(middlePool,used,usageMap,cursorMap,`a${arena.id}-alt-tail`,[seq[seq.length-1],bossGroupId]);
+        const altTail=pickSingleWithRng(middlePool,used,usageMap,cursorMap,`a${arena.id}-alt-tail`,[seq[seq.length-1],bossGroupId],rng);
         if(altTail) seq[seq.length-1]=altTail.id;
       }
       let highStreak=0;
@@ -1318,10 +1650,29 @@ function generateScriptsForAllArenas(minPerArena){
         const gid=seq[k];
         if(highIds.has(gid)&&gid!==bossGroupId) highStreak+=1; else highStreak=0;
         if(highStreak>=3&&k<seq.length-1){
-          const relief=pickSingleDeterministic(payoutBands.low,used,usageMap,cursorMap,`a${arena.id}-streak-break`,[gid,bossGroupId]);
+          const relief=pickSingleWithRng(payoutBands.low,used,usageMap,cursorMap,`a${arena.id}-streak-break`,[gid,bossGroupId],rng);
           if(relief) seq.splice(k,0,relief.id);
           highStreak=0;
         }
+      }
+
+      const mixed=ensureLowHighCombo(seq,lowPool,high20Pool,normalPool,usageMap,cursorMap,`a${arena.id}-s${i}`,rng,bossGroupId);
+      seq=mixed.seq;
+      if(i===scriptCount-1){
+        seq=ensureBossNotTail(seq,bossGroupId,normalPool,usageMap,cursorMap,`a${arena.id}-boss`,rng);
+      }
+
+      const gapMs=buildGapMs(i,scriptCount);
+      const beforeCapCount=seq.length;
+      const beforeCapPeak=calcMaxConcurrentFish(seq,gapMs);
+      const mustKeep=new Set([bossGroupId,mixed.keepHighId,mixed.keepLowId].filter(x=>num(x,0)>0));
+      seq=constrainSequenceByFishCap(seq,gapMs,50,bossGroupId,mustKeep);
+      if(i===scriptCount-1){
+        seq=ensureBossNotTail(seq,bossGroupId,normalPool,usageMap,cursorMap,`a${arena.id}-boss-post-cap`,rng);
+      }
+      const afterCapPeak=calcMaxConcurrentFish(seq,gapMs);
+      if(seq.length<beforeCapCount||afterCapPeak<beforeCapPeak){
+        issues.push(`Arena ${arena.id} Script阶段${i+1}: 并发鱼数限制50（${beforeCapPeak}->${afterCapPeak}）`);
       }
 
       if(!seq.length) continue;
@@ -1329,7 +1680,7 @@ function generateScriptsForAllArenas(minPerArena){
       prevTail=seq[seq.length-1];
       out.push({
         scriptId:nextId++,
-        gapTimeMs:buildGapMs(i,scriptCount),
+        gapTimeMs:gapMs,
         arenaIds:[arena.id],
         type:seq.includes(bossGroupId)?2:1,
         groupIds:seq
@@ -1343,14 +1694,130 @@ async function tryGenerateByModel(minPerArena,llmConfig,hooks={}){
   const onStage=(msg,isWarn=false)=>{if(typeof hooks.onStage==="function") hooks.onStage(msg,isWarn);};
   const onResponse=(payload,status)=>{if(typeof hooks.onResponse==="function") hooks.onResponse(payload,status);};
   const onDebug=(item)=>{if(typeof hooks.onDebug==="function") hooks.onDebug(item);};
+  const safePayload=buildSafeRequestPayload(minPerArena,llmConfig);
   onStage("准备向AI发送请求");
   try{
-    console.log("[AI-REQ-JSON] /api/generate-script-ai\n"+JSON.stringify({minPerArena,llmConfig},null,2));
+    console.log("[AI-REQ-JSON] /api/generate-script-ai-stream\n"+JSON.stringify(safePayload,null,2));
   }catch(_e){
-    console.log("[AI-REQ] /api/generate-script-ai payload =",{minPerArena,llmConfig});
+    console.log("[AI-REQ] /api/generate-script-ai-stream payload =",safePayload);
   }
+
+  const parseSSEChunk=(chunk,handler)=>{
+    const normalized=String(chunk||"").replace(/\r/g,"");
+    const blocks=normalized.split("\n\n");
+    const remain=blocks.pop()||"";
+    for(const block of blocks){
+      const lines=block.split("\n");
+      let eventName="message";
+      const dataLines=[];
+      for(const line of lines){
+        if(line.startsWith("event:")) eventName=line.slice(6).trim();
+        else if(line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      const rawData=dataLines.join("\n");
+      if(!rawData) continue;
+      let dataObj;
+      try{dataObj=JSON.parse(rawData);}catch(_e){dataObj={raw:rawData};}
+      handler(eventName,dataObj);
+    }
+    return remain;
+  };
+
   try{
-    onStage("请求已发送，等待AI返回");
+    onStage("第一步：快速探活AI接口...");
+    const pingRes=await fetch("/api/ai-ping",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({llmConfig})
+    });
+    let pingData;
+    try{pingData=await pingRes.json();}catch(_e){pingData={ok:false,error:`HTTP ${pingRes.status} 非JSON响应`};}
+    if(Array.isArray(pingData.debug)){
+      for(const item of pingData.debug){
+        if(!item||typeof item!=="object") continue;
+        onDebug(item);
+      }
+    }
+    if(!pingData.ok) throw new Error(pingData.error||`HTTP ${pingRes.status}`);
+    const elapsed=Number(pingData?.ping?.elapsedMs)||0;
+    onStage(`AI接口可达（ping ${elapsed}ms）`);
+  }catch(err){
+    onStage(`AI接口探活失败：${err.message||err}`,true);
+    return {ok:false,error:err.message||"AI接口探活失败"};
+  }
+
+  try{
+    onStage("请求已发送，等待流式状态...");
+    const res=await fetch("/api/generate-script-ai-stream",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({minPerArena,llmConfig})
+    });
+    if(!res.ok){
+      throw new Error(`HTTP ${res.status}`);
+    }
+    if(!res.body){
+      throw new Error("浏览器不支持流式读取响应体");
+    }
+
+    const reader=res.body.getReader();
+    const decoder=new TextDecoder("utf-8");
+    let buffer="";
+    let finalData=null;
+    while(true){
+      const {done,value}=await reader.read();
+      if(done) break;
+      buffer+=decoder.decode(value,{stream:true});
+      buffer=parseSSEChunk(buffer,(eventName,data)=>{
+        if(eventName==="stage"){
+          onStage(data.message||"处理中...",Boolean(data.warn));
+          return;
+        }
+        if(eventName==="debug-item"){
+          if(data&&typeof data==="object") onDebug(data);
+          return;
+        }
+        if(eventName==="debug"){
+          const items=Array.isArray(data.items)?data.items:[];
+          for(const item of items){
+            if(!item||typeof item!=="object") continue;
+            onDebug(item);
+            if(typeof item.content==="string"){
+              console.log(`[AI-DEBUG] ${item.title||"untitled"}\n${item.content}`);
+            }else{
+              try{
+                console.log(`[AI-DEBUG] ${item.title||"untitled"}\n${JSON.stringify(item.content,null,2)}`);
+              }catch(_e){
+                console.log(`[AI-DEBUG] ${item.title||"untitled"}`,item.content);
+              }
+            }
+          }
+          return;
+        }
+        if(eventName==="result"){
+          finalData=data;
+          onResponse(data,res.status);
+          return;
+        }
+        if(eventName==="error"){
+          throw new Error(data.error||"AI流式请求失败");
+        }
+      });
+    }
+
+    const data=finalData||{ok:false,error:"流式通道结束但未返回结果"};
+    if(!data.ok) throw new Error(data.error||`HTTP ${res.status}`);
+    const scripts=Array.isArray(data.scripts)?data.scripts:[];
+    if(!scripts.length) throw new Error("大模型返回空结果");
+    onStage(`AI返回成功：${scripts.length}行`);
+    return {ok:true,scripts,model:data.model||"",notes:data.notes||"",raw:data,debug:Array.isArray(data.debug)?data.debug:[]};
+  }catch(err){
+    onStage(`流式请求失败，尝试普通模式：${err.message||err}`,true);
+    console.error("[AI-ERR] /api/generate-script-ai-stream",err);
+  }
+
+  try{
+    onStage("切换为普通请求模式...");
     const res=await fetch("/api/generate-script-ai",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -1359,27 +1826,11 @@ async function tryGenerateByModel(minPerArena,llmConfig,hooks={}){
     let data;
     try{data=await res.json();}catch(_e){data={ok:false,error:`HTTP ${res.status} 非JSON响应`};}
     onResponse(data,res.status);
-    try{
-      console.log("[AI-RES-JSON] /api/generate-script-ai\n"+JSON.stringify(data,null,2));
-    }catch(_e){
-      console.log("[AI-RES] /api/generate-script-ai response =",data);
-    }
     if(Array.isArray(data.debug)){
       for(const item of data.debug){
         if(!item||typeof item!=="object") continue;
         onDebug(item);
-        if(typeof item.content==="string"){
-          console.log(`[AI-DEBUG] ${item.title||"untitled"}\n${item.content}`);
-        }else{
-          try{
-            console.log(`[AI-DEBUG] ${item.title||"untitled"}\n${JSON.stringify(item.content,null,2)}`);
-          }catch(_e){
-            console.log(`[AI-DEBUG] ${item.title||"untitled"}`,item.content);
-          }
-        }
       }
-    }else{
-      console.warn("[AI-DEBUG] 服务端未返回debug字段，可能是旧版本服务未重启");
     }
     if(!data.ok) throw new Error(data.error||`HTTP ${res.status}`);
     const scripts=Array.isArray(data.scripts)?data.scripts:[];
@@ -1393,7 +1844,7 @@ async function tryGenerateByModel(minPerArena,llmConfig,hooks={}){
   }
 }
 
-async function onAutoGenerateScripts(){
+async function onAutoGenerateScripts(triggerSource="topbar"){
   const llmCfg=getLLMRequestConfig();
   const minPerArena=Math.max(3,Math.round(llmCfg.minPerArena||6));
   const mode=llmCfg.mode||"auto";
@@ -1402,24 +1853,31 @@ async function onAutoGenerateScripts(){
     toast("数据未加载完成，请先点“重新读取表”",true);
     return;
   }
-  const requestPayload={minPerArena,llmConfig:llmCfg};
+  const requestPayload=buildSafeRequestPayload(minPerArena,llmCfg,`req-${Date.now()}`);
   state.aiReview.minPerArena=minPerArena;
   openAIReviewDialog();
   resetAIReviewDialog(requestPayload);
   setAIReviewBusy(true);
-  pushAIStatus(`启动智能生成（mode=${mode}, minPerArena=${minPerArena}）`);
+  pushAIStatus(`启动智能生成（source=${triggerSource}, mode=${mode}, minPerArena=${minPerArena}）`);
+  setReviewRawResponse({ok:false,status:"running",requestId:requestPayload.requestId,message:"生成中，请等待流式状态..."});
 
   let generatedResult={scripts:[],issues:[]};
   let sourceTag="smart-rule";
+  let fallbackReason="";
+  let aiAttemptMeta=null;
+  let localSeed=0;
   const runLocal=(reasonText)=>{
     if(reasonText) pushAIStatus(reasonText,true);
-    generatedResult=generateScriptsForAllArenas(minPerArena);
+    fallbackReason=String(reasonText||"");
+    localSeed=(Date.now()^Math.floor(Math.random()*0x7fffffff))>>>0;
+    generatedResult=generateScriptsForAllArenas(minPerArena,localSeed);
     sourceTag="smart-rule";
-    pushAIStatus(`本地算法生成完成：${(generatedResult.scripts||[]).length}行`);
+    pushAIStatus(`本地算法生成完成：${(generatedResult.scripts||[]).length}行（seed=${localSeed}）`);
   };
 
   if(mode==="local"){
     runLocal("当前为仅本地模式，未调用AI。");
+    aiAttemptMeta={ok:false,reason:"mode=local"};
   }else{
     const aiResult=await tryGenerateByModel(minPerArena,llmCfg,{
       onStage:(msg,isWarn)=>pushAIStatus(msg,isWarn),
@@ -1429,10 +1887,13 @@ async function onAutoGenerateScripts(){
       },
       onDebug:(item)=>{
         if(!item||typeof item!=="object") return;
+        state.aiReview.debugItems.push(item);
+        refreshAIRequestPreview();
         const title=String(item.title||"untitled");
         if(title.includes("exception")||title.includes("error")||title.includes("timeout")) pushAIStatus(`debug: ${title}`,true);
       }
     });
+    aiAttemptMeta=aiResult;
     if(aiResult.ok){
       generatedResult={scripts:(aiResult.scripts||[]),issues:[]};
       sourceTag=`llm:${aiResult.model||"unknown"}`;
@@ -1462,7 +1923,17 @@ async function onAutoGenerateScripts(){
     pushAIStatus(`部分渔场被跳过：${generatedResult.issues[0]}`,true);
   }
   if(!state.aiReview.lastResponse){
-    setReviewRawResponse({ok:true,source:sourceTag,rows:generated.length,issues:generatedResult.issues||[]});
+    setReviewRawResponse({
+      ok:true,
+      source:sourceTag,
+      rows:generated.length,
+      issues:generatedResult.issues||[],
+      explain:sourceTag==="smart-rule"?"当前结果来自本地算法（非AI直接返回）":"当前结果来自AI",
+      mode,
+      localSeed,
+      fallbackReason,
+      aiAttempt:aiAttemptMeta
+    });
   }
   state.aiReview.sourceTag=sourceTag;
   state.aiReview.candidateScripts=generated;

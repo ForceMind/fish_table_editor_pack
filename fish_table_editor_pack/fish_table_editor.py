@@ -8,11 +8,13 @@ import json
 import os
 import re
 import socket
+import threading
+import time
 from datetime import datetime
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -110,6 +112,20 @@ def sanitize_llm_config(config: Any) -> Dict[str, Any]:
         "timeoutSec": timeout_sec,
         "maxTokens": max_tokens,
     }
+
+
+def mask_api_key(value: str) -> str:
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    return f"***{key[-4:]}" if len(key) >= 4 else "***"
+
+
+def masked_llm_config(llm_config: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = dict(llm_config or {})
+    if cfg.get("apiKey"):
+        cfg["apiKey"] = mask_api_key(str(cfg.get("apiKey")))
+    return cfg
 
 
 def sanitize_output_name(name: str) -> str:
@@ -559,16 +575,74 @@ def build_llm_generation_context(cache: CacheData, min_per_arena: int) -> Dict[s
                 "name": arena.get("name", f"Arena-{arena_id}"),
                 "minScripts": min_per_arena,
                 "groups": groups,
-                # Keep sample scripts short to reduce context size and timeout risk.
-                "existingScripts": sorted(arena_to_scripts.get(arena_id, []), key=lambda x: x["scriptId"])[:8],
+                "existingScripts": sorted(arena_to_scripts.get(arena_id, []), key=lambda x: x["scriptId"]),
             }
         )
 
     start_script_id = max((to_int(x.get("scriptId"), 0) for x in cache.scripts), default=0) + 1
+    all_scripts = sorted(
+        [
+            {
+                "scriptId": to_int(row.get("scriptId"), 0),
+                "gapTimeMs": max(0, to_int(row.get("gapTimeMs"), 0)),
+                "arenaIds": parse_id_list(row.get("arenaIds")),
+                "type": to_int(row.get("type"), 1),
+                "groupIds": parse_id_list(row.get("groupIds")),
+            }
+            for row in cache.scripts
+        ],
+        key=lambda x: x["scriptId"],
+    )
     return {
         "startScriptId": start_script_id,
         "minPerArena": min_per_arena,
+        "currentScripts": all_scripts,
         "arenas": arena_payload,
+    }
+
+
+def build_local_algorithm_requirements() -> Dict[str, Any]:
+    return {
+        "scopeRules": {
+            "onlyUseConfiguredGroups": True,
+            "mustContainBossPoolAndNormalPool": True,
+            "preferReuseBossFromCurrentScripts": True,
+        },
+        "scriptCountRule": "scriptCount = max(minPerArena, min(8, round(normalPoolSize/4)+3))",
+        "payoutBandRule": {
+            "split": "normalPool按avgPayout分low/mid/high三段",
+            "stagePattern": [
+                {"progress": "0%~20%", "low": 4, "mid": 2, "high": 0},
+                {"progress": "20%~45%", "low": 3, "mid": 3, "high": 1},
+                {"progress": "45%~70%", "low": 2, "mid": 3, "high": 2},
+                {"progress": "70%~100%", "low": 1, "mid": 2, "high": 3},
+            ],
+        },
+        "gapRule": {
+            "calmPhase": "3600 -> 2800",
+            "pressurePhase": "2800 -> 2100",
+            "climaxPhase": "2200 -> 1900",
+            "roundTo100ms": True,
+        },
+        "bossRule": {
+            "exactlyOncePerArena": True,
+            "mustInLastScript": True,
+            "mustInLatterHalf": True,
+            "typeWhenContainsBoss": 2,
+            "typeOtherwise": 1,
+        },
+        "antiRepetitionRule": {
+            "balanceLeastUsedGroups": True,
+            "avoidSameHeadTailAcrossAdjacentScripts": True,
+            "breakHighPayoutStreakAtLeastEvery3": True,
+            "insertSkillAsPatternBreakerInMidLate": True,
+            "insertLowReliefBeforeFinalStageInNonEndingScripts": True,
+        },
+        "outputRule": {
+            "scriptIdStartFromContextStartScriptId": True,
+            "scriptIdGlobalIncreasing": True,
+            "oneArenaPerRow": True,
+        },
     }
 
 
@@ -695,6 +769,20 @@ def _push_debug(debug_trace: List[Dict[str, Any]], title: str, content: Any) -> 
     debug_trace.append({"title": title, "content": content})
 
 
+class StreamDebugTrace(list):
+    def __init__(self, emit_cb: Callable[[Dict[str, Any]], None] | None = None):
+        super().__init__()
+        self._emit_cb = emit_cb
+
+    def append(self, item: Dict[str, Any]) -> None:  # type: ignore[override]
+        super().append(item)
+        if self._emit_cb is not None:
+            try:
+                self._emit_cb(item)
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+
 def _post_chat_completion(
     endpoint: str,
     api_key: str,
@@ -750,6 +838,7 @@ def call_openai_for_scripts(
     llm_config: Dict[str, Any],
     debug_trace: List[Dict[str, Any]],
     arena_tag: str = "",
+    progress_cb: Callable[[str, bool], None] | None = None,
 ) -> Tuple[List[Dict[str, Any]], str, str]:
     api_key = str(llm_config.get("apiKey") or "").strip()
     if not api_key:
@@ -790,6 +879,7 @@ def call_openai_for_scripts(
                     {
                         "task": "根据输入context生成脚本",
                         "context": context,
+                        "localAlgorithmRequirements": build_local_algorithm_requirements(),
                     },
                     ensure_ascii=False,
                 ),
@@ -818,6 +908,8 @@ def call_openai_for_scripts(
     ]
     last_error = "大模型生成失败"
     for tag, req_body in attempts:
+        if progress_cb is not None:
+            progress_cb(f"{arena_tag or 'arena'}: AI请求尝试 {tag}", False)
         _push_debug(debug_trace, f"AI request payload ({tag}){label}", req_body)
         try:
             payload = _post_chat_completion(endpoint, api_key, req_body, timeout_sec, debug_trace, f"{tag}{label}")
@@ -868,9 +960,44 @@ def call_openai_for_scripts(
             last_error = "大模型JSON缺少scripts数组"
             continue
         notes = str(parsed.get("notes", "") or "")
+        if progress_cb is not None:
+            progress_cb(f"{arena_tag or 'arena'}: AI返回成功，已解析JSON", False)
         return scripts, model, notes
 
     raise RuntimeError(last_error)
+
+
+def call_openai_ping(llm_config: Dict[str, Any], debug_trace: List[Dict[str, Any]]) -> Dict[str, Any]:
+    api_key = str(llm_config.get("apiKey") or "").strip()
+    if not api_key:
+        raise RuntimeError("未设置 OPENAI_API_KEY，无法探测接口")
+    model = str(llm_config.get("model") or "gpt-4.1-mini").strip() or "gpt-4.1-mini"
+    timeout_sec = max(6, min(20, to_int(llm_config.get("timeoutSec"), 90)))
+    temperature = clamp_float(llm_config.get("temperature"), 0.0, 1.0, 0.2)
+    base_url = str(llm_config.get("baseUrl") or "https://api.openai.com/v1").strip()
+    endpoint = f"{base_url}/chat/completions"
+    body: Dict[str, Any] = {
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": 8,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": "You are a health-check assistant. Reply with OK."},
+            {"role": "user", "content": "ping"},
+        ],
+    }
+    start_ts = time.time()
+    payload = _post_chat_completion(endpoint, api_key, body, timeout_sec, debug_trace, "ping")
+    elapsed_ms = int((time.time() - start_ts) * 1000)
+    candidate, _source = _extract_completion_candidate(payload)
+    reply_text = _content_to_text(candidate) if isinstance(candidate, (dict, list)) else str(candidate or "")
+    return {
+        "ok": True,
+        "model": model,
+        "endpoint": endpoint,
+        "elapsedMs": elapsed_ms,
+        "reply": reply_text[:120],
+    }
 
 
 def validate_ai_scripts(scripts: List[Dict[str, Any]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1007,8 +1134,13 @@ def validate_ai_scripts(scripts: List[Dict[str, Any]], context: Dict[str, Any]) 
 
 
 def generate_scripts_by_llm(
-    min_per_arena: int, llm_config: Dict[str, Any], debug_trace: List[Dict[str, Any]]
+    min_per_arena: int,
+    llm_config: Dict[str, Any],
+    debug_trace: List[Dict[str, Any]],
+    progress_cb: Callable[[str, bool], None] | None = None,
 ) -> Dict[str, Any]:
+    if progress_cb is not None:
+        progress_cb("读取配置表并构建AI上下文", False)
     cache = load_all_data()
     context = build_llm_generation_context(cache, min_per_arena)
     _push_debug(debug_trace, "AI generation context", context)
@@ -1027,6 +1159,8 @@ def generate_scripts_by_llm(
     for arena in arenas:
         arena_id = to_int(arena.get("arenaId"), 0)
         arena_name = str(arena.get("name") or f"Arena-{arena_id}")
+        if progress_cb is not None:
+            progress_cb(f"开始生成 Arena {arena_id}（{arena_name}）", False)
         arena_context = {
             "startScriptId": next_script_id,
             "minPerArena": min_per_arena,
@@ -1034,15 +1168,23 @@ def generate_scripts_by_llm(
         }
         _push_debug(debug_trace, f"AI arena context[{arena_id}]", arena_context)
         scripts_raw, model, notes = call_openai_for_scripts(
-            arena_context, llm_config, debug_trace, arena_tag=f"arena:{arena_id}"
+            arena_context,
+            llm_config,
+            debug_trace,
+            arena_tag=f"arena:{arena_id}",
+            progress_cb=progress_cb,
         )
         model_name = model or model_name
         _push_debug(debug_trace, f"AI parsed scripts before validation[{arena_id}]", scripts_raw)
+        if progress_cb is not None:
+            progress_cb(f"Arena {arena_id} 返回完成，开始校验结果", False)
         validated_rows = validate_ai_scripts(scripts_raw, arena_context)
         _push_debug(debug_trace, f"AI scripts after validation[{arena_id}]", validated_rows)
         if validated_rows:
             next_script_id = max(to_int(validated_rows[-1].get("scriptId"), next_script_id), next_script_id) + 1
             all_rows.extend(validated_rows)
+            if progress_cb is not None:
+                progress_cb(f"Arena {arena_id} 校验通过：{len(validated_rows)}行", False)
             if notes:
                 note_parts.append(f"{arena_name}: {notes}")
 
@@ -1140,6 +1282,20 @@ class EditorHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _start_sse(self, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+    def _write_sse_event(self, event_name: str, data: Dict[str, Any]) -> None:
+        payload = json.dumps(data, ensure_ascii=False)
+        chunk = f"event: {event_name}\\ndata: {payload}\\n\\n".encode("utf-8")
+        self.wfile.write(chunk)
+        self.wfile.flush()
+
     def _serve_static(self, rel_path: str) -> None:
         rel = rel_path.strip("/") or "index.html"
         clean = Path(rel)
@@ -1202,6 +1358,8 @@ class EditorHandler(BaseHTTPRequestHandler):
             "/api/preset/load",
             "/api/preset/delete",
             "/api/generate-script-ai",
+            "/api/generate-script-ai-stream",
+            "/api/ai-ping",
         ):
             self._write_text("not found", 404)
             return
@@ -1230,6 +1388,48 @@ class EditorHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # pylint: disable=broad-except
                 _push_debug(debug_trace, "exception", str(exc))
                 _debug_print_json("AI debug trace", debug_trace)
+                self._write_json({"ok": False, "error": str(exc), "debug": debug_trace}, 400)
+            return
+
+        if parsed.path == "/api/generate-script-ai-stream":
+            def emit_debug_item(item: Dict[str, Any]) -> None:
+                self._write_sse_event("debug-item", item)
+
+            debug_trace: List[Dict[str, Any]] = StreamDebugTrace(emit_cb=emit_debug_item)
+            self._start_sse(200)
+            try:
+                min_per_arena = max(1, to_int(payload.get("minPerArena"), 6))
+                llm_config = sanitize_llm_config(payload.get("llmConfig"))
+                debug_cfg = dict(llm_config)
+                if debug_cfg.get("apiKey"):
+                    api_key = str(debug_cfg.get("apiKey"))
+                    debug_cfg["apiKey"] = f"***{api_key[-4:]}" if len(api_key) >= 4 else "***"
+                _push_debug(debug_trace, "received llmConfig (masked)", debug_cfg)
+                self._write_sse_event("stage", {"message": "请求已接收，开始AI生成", "warn": False})
+
+                def progress(msg: str, is_warn: bool = False) -> None:
+                    self._write_sse_event("stage", {"message": msg, "warn": bool(is_warn)})
+
+                result = generate_scripts_by_llm(min_per_arena, llm_config, debug_trace, progress_cb=progress)
+                self._write_sse_event("result", {"ok": True, **result, "debug": debug_trace})
+                self._write_sse_event("done", {"ok": True})
+            except Exception as exc:  # pylint: disable=broad-except
+                _push_debug(debug_trace, "exception", str(exc))
+                try:
+                    self._write_sse_event("error", {"ok": False, "error": str(exc), "debug": debug_trace})
+                    self._write_sse_event("done", {"ok": False})
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            return
+
+        if parsed.path == "/api/ai-ping":
+            debug_trace: List[Dict[str, Any]] = []
+            try:
+                llm_config = sanitize_llm_config(payload.get("llmConfig"))
+                ping = call_openai_ping(llm_config, debug_trace)
+                self._write_json({"ok": True, "ping": ping, "debug": debug_trace})
+            except Exception as exc:  # pylint: disable=broad-except
+                _push_debug(debug_trace, "exception", str(exc))
                 self._write_json({"ok": False, "error": str(exc), "debug": debug_trace}, 400)
             return
 
