@@ -9,7 +9,7 @@ const state={
   llmConfig:{
     mode:"auto",minPerArena:6,
     baseUrl:"https://api.openai.com/v1",model:"gpt-4.1-mini",apiKey:"",temperature:0.2,maxTokens:2048,
-    templateShuffle:55,templateTrim:25,templateCandidates:8
+    templateShuffle:55,templateTrim:25,templateCandidates:8,minConcurrentFish:12,maxConcurrentFish:45
   },
   timelineScale:{pxPerMs:0.005,baseX:70},
   gapDrag:{active:false,scriptIndex:-1,startX:0,startGapMs:0,pxPerMs:0.005},
@@ -28,6 +28,8 @@ const els={
   genTemplateShuffle:document.getElementById("gen-template-shuffle"),
   genTemplateTrim:document.getElementById("gen-template-trim"),
   genTemplateCandidates:document.getElementById("gen-template-candidates"),
+  genMinConcurrentFish:document.getElementById("gen-min-concurrent-fish"),
+  genMaxConcurrentFish:document.getElementById("gen-max-concurrent-fish"),
   llmBaseUrl:document.getElementById("llm-base-url"),llmModel:document.getElementById("llm-model"),
   llmApiKey:document.getElementById("llm-api-key"),llmTemperature:document.getElementById("llm-temperature"),llmMaxTokens:document.getElementById("llm-max-tokens"),
   groupPicker:document.getElementById("group-picker"),pickerRowInfo:document.getElementById("picker-row-info"),
@@ -58,7 +60,7 @@ function bindEvents(){
   document.getElementById("preset-save-btn").addEventListener("click",onPresetSaveCurrent);
   document.getElementById("preset-delete-btn").addEventListener("click",onPresetDelete);
   els.presetSelect.addEventListener("change",()=>{state.selectedPresetName=els.presetSelect.value||"";});
-  for(const node of [els.genMode,els.genMinPerArena,els.genTemplateShuffle,els.genTemplateTrim,els.genTemplateCandidates,els.llmBaseUrl,els.llmModel,els.llmApiKey,els.llmTemperature,els.llmMaxTokens]){
+  for(const node of [els.genMode,els.genMinPerArena,els.genTemplateShuffle,els.genTemplateTrim,els.genTemplateCandidates,els.genMinConcurrentFish,els.genMaxConcurrentFish,els.llmBaseUrl,els.llmModel,els.llmApiKey,els.llmTemperature,els.llmMaxTokens]){
     if(!node) continue;
     node.addEventListener("change",()=>saveLLMConfig(false));
     node.addEventListener("blur",()=>saveLLMConfig(false));
@@ -162,6 +164,8 @@ function readLLMConfigFromInputs(){
     templateShuffle:Math.round(clampNum(els.genTemplateShuffle?.value,0,100,55)),
     templateTrim:Math.round(clampNum(els.genTemplateTrim?.value,0,70,25)),
     templateCandidates:Math.round(clampNum(els.genTemplateCandidates?.value,1,20,8)),
+    minConcurrentFish:Math.round(clampNum(els.genMinConcurrentFish?.value,5,60,12)),
+    maxConcurrentFish:Math.round(clampNum(els.genMaxConcurrentFish?.value,10,120,45)),
     baseUrl:(els.llmBaseUrl?.value||"https://api.openai.com/v1").trim(),
     model:(els.llmModel?.value||"gpt-4.1-mini").trim(),
     apiKey:(els.llmApiKey?.value||"").trim(),
@@ -176,6 +180,8 @@ function applyLLMConfigToInputs(){
   if(els.genTemplateShuffle) els.genTemplateShuffle.value=String(Math.round(clampNum(state.llmConfig.templateShuffle,0,100,55)));
   if(els.genTemplateTrim) els.genTemplateTrim.value=String(Math.round(clampNum(state.llmConfig.templateTrim,0,70,25)));
   if(els.genTemplateCandidates) els.genTemplateCandidates.value=String(Math.round(clampNum(state.llmConfig.templateCandidates,1,20,8)));
+  if(els.genMinConcurrentFish) els.genMinConcurrentFish.value=String(Math.round(clampNum(state.llmConfig.minConcurrentFish,5,60,12)));
+  if(els.genMaxConcurrentFish) els.genMaxConcurrentFish.value=String(Math.round(clampNum(state.llmConfig.maxConcurrentFish,10,120,45)));
   if(els.llmBaseUrl) els.llmBaseUrl.value=state.llmConfig.baseUrl||"https://api.openai.com/v1";
   if(els.llmModel) els.llmModel.value=state.llmConfig.model||"gpt-4.1-mini";
   if(els.llmApiKey) els.llmApiKey.value=state.llmConfig.apiKey||"";
@@ -202,6 +208,8 @@ function getLLMRequestConfig(){
     templateShuffle:Math.round(clampNum(state.llmConfig.templateShuffle,0,100,55)),
     templateTrim:Math.round(clampNum(state.llmConfig.templateTrim,0,70,25)),
     templateCandidates:Math.round(clampNum(state.llmConfig.templateCandidates,1,20,8)),
+    minConcurrentFish:Math.round(clampNum(state.llmConfig.minConcurrentFish,5,60,12)),
+    maxConcurrentFish:Math.round(clampNum(state.llmConfig.maxConcurrentFish,10,120,45)),
     baseUrl:(state.llmConfig.baseUrl||"https://api.openai.com/v1").trim(),
     model:(state.llmConfig.model||"gpt-4.1-mini").trim(),
     apiKey:(state.llmConfig.apiKey||"").trim(),
@@ -1822,7 +1830,7 @@ function generateTemplateCandidate(minPerArena,templateOptions,seed){
     }
     const finalRows=enforceBossFinalRule(arenaRows,bossGroupId,arenaPool,rng);
     const evalResult=evaluateTemplateArenaRows(finalRows,bossGroupId);
-    arenaScores.push(evalResult.score);
+    arenaScores.push(Math.max(0,bestArenaEval.score));
     arenaMetrics.push({arenaId:arena.id,...evalResult.metrics});
     scripts.push(...finalRows);
   }
@@ -1831,24 +1839,330 @@ function generateTemplateCandidate(minPerArena,templateOptions,seed){
   return {scripts,issues,score,seed,metrics:arenaMetrics};
 }
 
-function generateScriptsByTemplate(minPerArena,templateOptions){
-  if(!state.arenas.length) return {scripts:[],issues:["无可用渔场"],score:0,seed:0,metrics:[]};
-  const candidateCount=Math.max(1,Math.round(clampNum(templateOptions?.templateCandidates,1,20,8)));
-  const baseSeed=(Number(templateOptions?.seed)||Date.now())>>>0;
-  let best=null;
-  for(let i=0;i<candidateCount;i++){
-    const seed=(baseSeed+Math.imul(i+1,0x9E3779B1))>>>0;
-    const candidate=generateTemplateCandidate(minPerArena,templateOptions,seed);
-    if(!best||candidate.score>best.score||(candidate.score===best.score&&candidate.scripts.length>best.scripts.length)){
-      best=candidate;
+function rotateArrayDeterministic(arr,shift){
+  const source=Array.isArray(arr)?arr:[];
+  if(!source.length) return [];
+  const n=source.length;
+  const s=((num(shift,0)%n)+n)%n;
+  if(s===0) return source.slice();
+  return source.slice(s).concat(source.slice(0,s));
+}
+
+function reduceNeighborRepeatsDeterministic(seq,poolIds,bossGroupId){
+  const out=(Array.isArray(seq)?seq:[]).slice();
+  const pool=uniq((Array.isArray(poolIds)?poolIds:[]).filter(gid=>gid>0&&gid!==bossGroupId)).sort((a,b)=>a-b);
+  if(out.length<2||!pool.length) return out;
+  for(let i=1;i<out.length;i++){
+    if(out[i]!==out[i-1]) continue;
+    const next=i+1<out.length?out[i+1]:0;
+    let replacement=0;
+    for(const gid of pool){
+      if(gid===out[i-1]) continue;
+      if(next>0&&gid===next) continue;
+      replacement=gid;
+      break;
+    }
+    if(replacement>0) out[i]=replacement;
+  }
+  return out;
+}
+
+function deterministicStageRemix(groupIds,progress,shuffleStrength,trimRatio,rowIndex){
+  const ids=parseIds(groupIds).filter(gid=>gid>0);
+  if(!ids.length) return [];
+  const asc=ids.slice().sort((a,b)=>{
+    const pa=groupAvgPayoutById(a);
+    const pb=groupAvgPayoutById(b);
+    if(pa!==pb) return pa-pb;
+    return a-b;
+  });
+  const p=clamp(Number(progress)||0,0,1);
+  let staged=asc;
+  if(p>=0.72) staged=asc.slice().reverse();
+  else if(p>=0.38) staged=interleaveLowHigh(asc);
+
+  const s=clamp(num(shuffleStrength,55),0,100);
+  const shift=staged.length<=1?0:Math.floor(((rowIndex+1)*(s+7))/17)%staged.length;
+  let remixed=rotateArrayDeterministic(staged,shift);
+
+  const ratio=clamp(num(trimRatio,25),0,70)/100;
+  const target=Math.max(2,Math.round(remixed.length*(1-ratio)));
+  if(remixed.length>target){
+    const keep=[];
+    const step=(remixed.length-1)/Math.max(1,target-1);
+    for(let i=0;i<target;i++){
+      keep.push(remixed[Math.round(i*step)]);
+    }
+    remixed=keep;
+  }
+  return uniq(remixed);
+}
+
+function buildDensityPoolIds(groups){
+  return (Array.isArray(groups)?groups:[])
+    .slice()
+    .sort((a,b)=>{
+      const fa=Math.max(1,groupFishCount(a));
+      const fb=Math.max(1,groupFishCount(b));
+      if(fa!==fb) return fb-fa;
+      const pa=num(a?.avgPayout,0);
+      const pb=num(b?.avgPayout,0);
+      if(pa!==pb) return pa-pb;
+      return num(a?.id,0)-num(b?.id,0);
+    })
+    .map(g=>num(g?.id,0))
+    .filter(id=>id>0);
+}
+
+function constrainSequenceByFishRangeDeterministic(seq,gapMs,minFish,maxFish,bossGroupId,poolIds,mustKeepSet){
+  let out=parseIds(seq).filter(gid=>gid>0);
+  const keep=mustKeepSet instanceof Set?mustKeepSet:new Set();
+  const minTarget=Math.max(1,num(minFish,12));
+  const maxTarget=Math.max(minTarget+1,num(maxFish,45));
+  const candidates=uniq((Array.isArray(poolIds)?poolIds:[]).filter(gid=>gid>0&&gid!==bossGroupId));
+
+  if(!out.length&&candidates.length) out=[candidates[0]];
+  out=constrainSequenceByFishCap(out,gapMs,maxTarget,bossGroupId,keep);
+
+  let cursor=0;
+  for(let guard=0;guard<120;guard++){
+    const peak=calcMaxConcurrentFish(out,gapMs);
+    if(peak>=minTarget) break;
+    if(!candidates.length) break;
+    const gid=candidates[cursor%candidates.length];
+    cursor+=1;
+    let insertPos=Math.floor(out.length/2);
+    const bossPos=out.indexOf(bossGroupId);
+    if(bossPos>0) insertPos=bossPos;
+    if(insertPos>0&&out[insertPos-1]===gid) insertPos=Math.min(out.length,insertPos+1);
+    out.splice(insertPos,0,gid);
+    out=constrainSequenceByFishCap(out,gapMs,maxTarget,bossGroupId,keep);
+  }
+  return out;
+}
+
+function enforceBossPlacementDeterministic(rows,bossGroupId,escortIds,minRatio,maxRatio){
+  const out=(Array.isArray(rows)?rows:[]).map(row=>({
+    scriptId:num(row.scriptId,0),
+    gapTimeMs:Math.max(0,num(row.gapTimeMs,0)),
+    arenaIds:parseIds(row.arenaIds),
+    type:num(row.type,1),
+    groupIds:parseIds(row.groupIds)
+  }));
+  if(!out.length||bossGroupId<=0) return out;
+
+  for(const row of out){
+    row.groupIds=row.groupIds.filter(gid=>gid!==bossGroupId);
+  }
+  const last=out[out.length-1];
+  const escorts=uniq((Array.isArray(escortIds)?escortIds:[]).filter(gid=>gid>0&&gid!==bossGroupId));
+  if(!last.groupIds.length&&escorts.length) last.groupIds.push(escorts[0]);
+  while(last.groupIds.length<4&&escorts.length){
+    last.groupIds.push(escorts[last.groupIds.length%escorts.length]);
+  }
+  if(!last.groupIds.length){
+    last.groupIds=[bossGroupId];
+  }else{
+    const predictedLen=last.groupIds.length+1;
+    let minIdx=Math.max(1,Math.ceil(predictedLen*minRatio)-1);
+    let maxIdx=Math.min(last.groupIds.length-1,Math.floor(predictedLen*maxRatio)-1);
+    if(maxIdx<minIdx) maxIdx=minIdx;
+    const targetIdx=clamp(Math.floor((minIdx+maxIdx)/2),1,Math.max(1,last.groupIds.length-1));
+    last.groupIds.splice(targetIdx,0,bossGroupId);
+  }
+
+  let bossIdx=last.groupIds.indexOf(bossGroupId);
+  if(bossIdx<=0){
+    const before=escorts[0]||last.groupIds.find(gid=>gid!==bossGroupId)||0;
+    if(before>0){
+      last.groupIds.unshift(before);
+      bossIdx+=1;
     }
   }
-  if(!best) return {scripts:[],issues:["模板生成失败"],score:0,seed:baseSeed,metrics:[]};
-  const metricLine=best.metrics.map(x=>`A${x.arenaId}:S${x.bossOk?"1":"0"}/U${x.uniqueRatio}/T${x.tensionScore}`).join(" | ");
-  const issues=(best.issues||[]).slice(0,6);
-  issues.push(`templateScore=${best.score}`);
-  if(metricLine) issues.push(`metrics=${metricLine}`);
-  return {...best,issues};
+  if(bossIdx>=last.groupIds.length-1){
+    const after=escorts[1]||escorts[0]||last.groupIds.find(gid=>gid!==bossGroupId)||0;
+    if(after>0) last.groupIds.push(after);
+  }
+  bossIdx=last.groupIds.indexOf(bossGroupId);
+  if(escorts.length&&bossIdx>0&&groupAvgPayoutById(last.groupIds[bossIdx-1])>=20){
+    last.groupIds[bossIdx-1]=escorts[0];
+  }
+  if(escorts.length&&bossIdx>=0&&bossIdx<last.groupIds.length-1&&groupAvgPayoutById(last.groupIds[bossIdx+1])>=20){
+    last.groupIds[bossIdx+1]=escorts[1]||escorts[0];
+  }
+
+  bossIdx=last.groupIds.indexOf(bossGroupId);
+  const minFinal=Math.max(1,Math.ceil(last.groupIds.length*minRatio)-1);
+  const maxFinal=Math.min(last.groupIds.length-2,Math.floor(last.groupIds.length*maxRatio)-1);
+  const targetFinal=clamp(bossIdx,minFinal,Math.max(minFinal,maxFinal));
+  if(targetFinal!==bossIdx){
+    last.groupIds.splice(bossIdx,1);
+    last.groupIds.splice(targetFinal,0,bossGroupId);
+  }
+
+  for(const row of out){
+    row.type=row.groupIds.includes(bossGroupId)?2:1;
+  }
+  return out;
+}
+
+function generateScriptsByTemplate(minPerArena,templateOptions){
+  if(!state.arenas.length) return {scripts:[],issues:["无可用渔场"],score:0,seed:0,metrics:[]};
+  const shuffleStrength=Math.round(clampNum(templateOptions?.templateShuffle,0,100,55));
+  const trimRatio=Math.round(clampNum(templateOptions?.templateTrim,0,70,25));
+  const candidateRounds=Math.max(1,Math.round(clampNum(templateOptions?.templateCandidates,1,20,8)));
+  const minFish=Math.round(clampNum(templateOptions?.minConcurrentFish,5,60,12));
+  const maxFish=Math.max(minFish+2,Math.round(clampNum(templateOptions?.maxConcurrentFish,10,120,45)));
+  const bossMinRatio=0.55;
+  const bossMaxRatio=0.78;
+
+  let nextId=state.scripts.reduce((m,r)=>Math.max(m,r.scriptId),0)+1;
+  const scripts=[];
+  const issues=[];
+  const arenaMetrics=[];
+  const arenaScores=[];
+
+  for(const arena of state.arenas){
+    const baseRows=collectBaseRowsForArena(arena.id);
+    if(!baseRows.length){
+      issues.push(`Arena ${arena.id} 缺少基础脚本，已跳过`);
+      continue;
+    }
+    const configured=collectConfiguredGroupsForArena(arena.id);
+    const bossPool=configured.filter(g=>groupHasBoss(g));
+    const normalPool=configured.filter(g=>!groupHasBoss(g));
+    if(!bossPool.length){
+      issues.push(`Arena ${arena.id} 缺少Boss组，已跳过`);
+      continue;
+    }
+    if(!normalPool.length){
+      issues.push(`Arena ${arena.id} 缺少普通组，已跳过`);
+      continue;
+    }
+
+    const bossGroupId=pickBossFromArenaRows(baseRows,configured);
+    if(bossGroupId<=0){
+      issues.push(`Arena ${arena.id} 无法识别Boss组，已跳过`);
+      continue;
+    }
+    const lowPool=normalPool
+      .filter(g=>num(g?.avgPayout,0)<20)
+      .slice()
+      .sort((a,b)=>{
+        const pa=num(a?.avgPayout,0);
+        const pb=num(b?.avgPayout,0);
+        if(pa!==pb) return pa-pb;
+        return num(a?.id,0)-num(b?.id,0);
+      });
+    const escortIds=(lowPool.length?lowPool:normalPool)
+      .map(g=>num(g?.id,0))
+      .filter(id=>id>0&&id!==bossGroupId);
+    const densityIds=buildDensityPoolIds(lowPool.length?lowPool:normalPool).filter(id=>id!==bossGroupId);
+    const fallbackIds=(densityIds.length?densityIds:escortIds);
+    if(!fallbackIds.length){
+      issues.push(`Arena ${arena.id} 缺少可用于陪衬的普通组，已跳过`);
+      continue;
+    }
+
+    const rowCount=Math.max(1,Math.max(minPerArena,baseRows.length));
+    let bestArenaRows=[];
+    let bestArenaEval={score:-999,metrics:{}};
+    let bestArenaBossWindowOk=false;
+    let bestArenaBossEscortOk=false;
+    let bestArenaPeakMin=0;
+    let bestArenaPeakMax=0;
+
+    for(let round=0;round<candidateRounds;round++){
+      const trialRows=[];
+      for(let i=0;i<rowCount;i++){
+        const base=baseRows[i%baseRows.length];
+        const progress=rowCount<=1?1:i/(rowCount-1);
+        let groupIds=deterministicStageRemix(base.groupIds,progress,shuffleStrength,trimRatio,i+round).filter(gid=>gid!==bossGroupId);
+        if(!groupIds.length) groupIds=[fallbackIds[0]];
+        groupIds=reduceNeighborRepeatsDeterministic(groupIds,fallbackIds,bossGroupId);
+        const stageGap=buildGapMs(i,rowCount);
+        const baseGap=Math.max(0,num(base.gapTimeMs,0));
+        const gapMs=Math.round(clamp((baseGap*0.45)+(stageGap*0.55),700,4800)/50)*50;
+        groupIds=constrainSequenceByFishRangeDeterministic(groupIds,gapMs,minFish,maxFish,bossGroupId,fallbackIds,new Set());
+        if(!groupIds.length) groupIds=[fallbackIds[0]];
+        trialRows.push({
+          scriptId:0,
+          gapTimeMs:gapMs,
+          arenaIds:[arena.id],
+          type:1,
+          groupIds
+        });
+      }
+
+      let arranged=enforceBossPlacementDeterministic(trialRows,bossGroupId,escortIds,bossMinRatio,bossMaxRatio);
+      const trialLast=arranged[arranged.length-1];
+      const trialBossPos=trialLast.groupIds.indexOf(bossGroupId);
+      const trialKeep=new Set([bossGroupId,trialLast.groupIds[trialBossPos-1],trialLast.groupIds[trialBossPos+1]].filter(x=>num(x,0)>0));
+      trialLast.groupIds=constrainSequenceByFishRangeDeterministic(trialLast.groupIds,trialLast.gapTimeMs,minFish,maxFish,bossGroupId,fallbackIds,trialKeep);
+      arranged=enforceBossPlacementDeterministic(arranged,bossGroupId,escortIds,bossMinRatio,bossMaxRatio);
+
+      const lastIds=parseIds(arranged[arranged.length-1]?.groupIds||[]);
+      const finalBossPos=lastIds.indexOf(bossGroupId);
+      const minBossIdx=Math.max(1,Math.ceil(lastIds.length*bossMinRatio)-1);
+      const maxBossIdx=Math.max(minBossIdx,Math.min(lastIds.length-2,Math.floor(lastIds.length*bossMaxRatio)-1));
+      const bossWindowOk=finalBossPos>=minBossIdx&&finalBossPos<=maxBossIdx;
+      const bossEscortOk=finalBossPos>0&&finalBossPos<lastIds.length-1&&groupAvgPayoutById(lastIds[finalBossPos-1])<20&&groupAvgPayoutById(lastIds[finalBossPos+1])<20;
+      const peaks=arranged.map(row=>calcMaxConcurrentFish(row.groupIds,row.gapTimeMs));
+      const peakMin=peaks.length?Math.min(...peaks):0;
+      const peakMax=peaks.length?Math.max(...peaks):0;
+      const evalResult=evaluateTemplateArenaRows(arranged,bossGroupId);
+      const penalty=
+        (bossWindowOk?0:25)+
+        (bossEscortOk?0:15)+
+        ((peakMin<minFish||peakMax>maxFish)?18:0);
+      const roundScore=evalResult.score-penalty;
+      if(round===0||roundScore>bestArenaEval.score){
+        bestArenaRows=arranged;
+        bestArenaEval={score:roundScore,metrics:evalResult.metrics};
+        bestArenaBossWindowOk=bossWindowOk;
+        bestArenaBossEscortOk=bossEscortOk;
+        bestArenaPeakMin=peakMin;
+        bestArenaPeakMax=peakMax;
+      }
+    }
+
+    const arenaRows=bestArenaRows.map(row=>({
+      ...row,
+      scriptId:nextId++
+    }));
+    const lastIds=parseIds(arenaRows[arenaRows.length-1]?.groupIds||[]);
+    const finalBossPos=lastIds.indexOf(bossGroupId);
+    arenaScores.push(Math.max(0,bestArenaEval.score));
+    arenaMetrics.push({
+      arenaId:arena.id,
+      bossPos:finalBossPos+1,
+      lastLen:lastIds.length,
+      bossWindowOk:bestArenaBossWindowOk,
+      bossEscortOk:bestArenaBossEscortOk,
+      peakMin:bestArenaPeakMin,
+      peakMax:bestArenaPeakMax,
+      ...bestArenaEval.metrics
+    });
+    if(!bestArenaBossWindowOk){
+      issues.push(`Arena ${arena.id} Boss位置未落在后段窗口（${bossMinRatio}-${bossMaxRatio}）`);
+    }
+    if(!bestArenaBossEscortOk){
+      issues.push(`Arena ${arena.id} Boss缺少低倍率陪衬（前后小鱼）`);
+    }
+    if(bestArenaPeakMin<minFish||bestArenaPeakMax>maxFish){
+      issues.push(`Arena ${arena.id} 同屏鱼数超出范围（min=${bestArenaPeakMin}, max=${bestArenaPeakMax}, target=${minFish}-${maxFish}）`);
+    }
+    scripts.push(...arenaRows);
+  }
+
+  const score=arenaScores.length?Math.round(arenaScores.reduce((a,b)=>a+b,0)/arenaScores.length):0;
+  const metricLine=arenaMetrics
+    .map(x=>`A${x.arenaId}:Boss@${x.bossPos}/${x.lastLen},Peak${x.peakMin}-${x.peakMax}`)
+    .join(" | ");
+  const outIssues=issues.slice(0,10);
+  outIssues.push(`templateScore=${score}`);
+  if(metricLine) outIssues.push(`metrics=${metricLine}`);
+  return {scripts,issues:outIssues,score,seed:0,metrics:arenaMetrics};
 }
 
 function generateScriptsForAllArenas(minPerArena,seedValue){
@@ -2166,36 +2480,38 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
   setReviewRawResponse({ok:false,status:"running",requestId:requestPayload.requestId,message:"生成中，请等待流式状态..."});
 
   let generatedResult={scripts:[],issues:[]};
-  let sourceTag="smart-rule";
+  let sourceTag="constraint-rule";
   let fallbackReason="";
   let aiAttemptMeta=null;
   let templateMeta=null;
-  let localSeed=0;
+  const buildConstraintCfg=()=>({
+    templateShuffle:Math.round(clampNum(llmCfg.templateShuffle,0,100,55)),
+    templateTrim:Math.round(clampNum(llmCfg.templateTrim,0,70,25)),
+    templateCandidates:Math.round(clampNum(llmCfg.templateCandidates,1,20,8)),
+    minConcurrentFish:Math.round(clampNum(llmCfg.minConcurrentFish,5,60,12)),
+    maxConcurrentFish:Math.round(clampNum(llmCfg.maxConcurrentFish,10,120,45))
+  });
   const runLocal=(reasonText)=>{
-    if(reasonText) pushAIStatus(reasonText,true);
+    if(reasonText) pushAIStatus(reasonText,false);
     fallbackReason=String(reasonText||"");
-    localSeed=(Date.now()^Math.floor(Math.random()*0x7fffffff))>>>0;
-    generatedResult=generateScriptsForAllArenas(minPerArena,localSeed);
-    sourceTag="smart-rule";
-    pushAIStatus(`本地算法生成完成：${(generatedResult.scripts||[]).length}行（seed=${localSeed}）`);
+    const cfg=buildConstraintCfg();
+    generatedResult=generateScriptsByTemplate(minPerArena,cfg);
+    sourceTag="constraint-rule";
+    templateMeta={...cfg,deterministic:true,selectedScore:generatedResult.score||0,metrics:generatedResult.metrics||[]};
+    pushAIStatus(`约束算法生成完成：${(generatedResult.scripts||[]).length}行（score=${generatedResult.score||0}）`);
   };
   const runTemplate=(reasonText)=>{
     if(reasonText) pushAIStatus(reasonText,false);
-    const templateCfg={
-      templateShuffle:Math.round(clampNum(llmCfg.templateShuffle,0,100,55)),
-      templateTrim:Math.round(clampNum(llmCfg.templateTrim,0,70,25)),
-      templateCandidates:Math.round(clampNum(llmCfg.templateCandidates,1,20,8)),
-      seed:(Date.now()^Math.floor(Math.random()*0x7fffffff))>>>0
-    };
+    const templateCfg=buildConstraintCfg();
     generatedResult=generateScriptsByTemplate(minPerArena,templateCfg);
     sourceTag="template-rule";
     templateMeta={
       ...templateCfg,
-      selectedSeed:generatedResult.seed||templateCfg.seed,
+      deterministic:true,
       selectedScore:generatedResult.score||0,
       metrics:generatedResult.metrics||[]
     };
-    pushAIStatus(`模板生成完成：${(generatedResult.scripts||[]).length}行（score=${generatedResult.score||0}, seed=${generatedResult.seed||templateCfg.seed}）`);
+    pushAIStatus(`模板生成完成：${(generatedResult.scripts||[]).length}行（score=${generatedResult.score||0}）`);
   };
 
   if(mode==="template"){
@@ -2225,7 +2541,7 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
       sourceTag=`llm:${aiResult.model||"unknown"}`;
       if(aiResult.notes) pushAIStatus(`AI说明：${aiResult.notes}`);
     }else if(mode==="auto"){
-      runLocal(`AI不可用，回退本地算法：${aiResult.error}`);
+      runLocal(`AI不可用，回退约束算法：${aiResult.error}`);
     }else{
       setAIStatusBadge("AI失败",true);
       setAIValidateMessage(`AI生成失败：${aiResult.error}`,true);
@@ -2252,10 +2568,10 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
     if(scoreIssue) pushAIStatus(`模板选优结果：${scoreIssue}`);
   }
   if(!state.aiReview.lastResponse){
-    const explain=sourceTag==="smart-rule"
-      ?"当前结果来自本地算法（非AI直接返回）"
+    const explain=sourceTag==="constraint-rule"
+      ?"当前结果来自约束算法（确定性，Boss与同屏鱼数有硬约束）"
       :sourceTag==="template-rule"
-        ?"当前结果来自模板重排算法（只打乱/缩减，不新增Group）"
+        ?"当前结果来自模板重排约束算法（只打乱/缩减，不新增Group）"
         :"当前结果来自AI";
     setReviewRawResponse({
       ok:true,
@@ -2266,7 +2582,6 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
       mode,
       template:templateMeta,
       score:generatedResult.score,
-      localSeed,
       fallbackReason,
       aiAttempt:aiAttemptMeta
     });
