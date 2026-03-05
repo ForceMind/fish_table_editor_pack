@@ -6,7 +6,11 @@ const state={
   viewMode:"cut",leftBossFilter:"all",pickerBossFilter:"all",
   pickerRowIndex:-1,pickerSelected:new Set(),dragFromIndex:-1,dragOverIndex:-1,
   presets:[],selectedPresetName:"",
-  llmConfig:{mode:"auto",minPerArena:6,baseUrl:"https://api.openai.com/v1",model:"gpt-4.1-mini",apiKey:"",temperature:0.2,maxTokens:2048},
+  llmConfig:{
+    mode:"auto",minPerArena:6,
+    baseUrl:"https://api.openai.com/v1",model:"gpt-4.1-mini",apiKey:"",temperature:0.2,maxTokens:2048,
+    templateShuffle:55,templateTrim:25,templateCandidates:8
+  },
   timelineScale:{pxPerMs:0.005,baseX:70},
   gapDrag:{active:false,scriptIndex:-1,startX:0,startGapMs:0,pxPerMs:0.005},
   aiReview:{busy:false,candidateScripts:[],validatedScripts:[],sourceTag:"",minPerArena:6,lastRequest:null,lastResponse:null,debugItems:[]}
@@ -21,6 +25,9 @@ const els={
   timelineTrack:document.getElementById("timeline-track"),timelineEvents:document.getElementById("timeline-events"),generateReport:document.getElementById("generate-report"),
   presetSelect:document.getElementById("preset-select"),
   genMode:document.getElementById("gen-mode"),genMinPerArena:document.getElementById("gen-min-per-arena"),
+  genTemplateShuffle:document.getElementById("gen-template-shuffle"),
+  genTemplateTrim:document.getElementById("gen-template-trim"),
+  genTemplateCandidates:document.getElementById("gen-template-candidates"),
   llmBaseUrl:document.getElementById("llm-base-url"),llmModel:document.getElementById("llm-model"),
   llmApiKey:document.getElementById("llm-api-key"),llmTemperature:document.getElementById("llm-temperature"),llmMaxTokens:document.getElementById("llm-max-tokens"),
   groupPicker:document.getElementById("group-picker"),pickerRowInfo:document.getElementById("picker-row-info"),
@@ -51,7 +58,7 @@ function bindEvents(){
   document.getElementById("preset-save-btn").addEventListener("click",onPresetSaveCurrent);
   document.getElementById("preset-delete-btn").addEventListener("click",onPresetDelete);
   els.presetSelect.addEventListener("change",()=>{state.selectedPresetName=els.presetSelect.value||"";});
-  for(const node of [els.genMode,els.genMinPerArena,els.llmBaseUrl,els.llmModel,els.llmApiKey,els.llmTemperature,els.llmMaxTokens]){
+  for(const node of [els.genMode,els.genMinPerArena,els.genTemplateShuffle,els.genTemplateTrim,els.genTemplateCandidates,els.llmBaseUrl,els.llmModel,els.llmApiKey,els.llmTemperature,els.llmMaxTokens]){
     if(!node) continue;
     node.addEventListener("change",()=>saveLLMConfig(false));
     node.addEventListener("blur",()=>saveLLMConfig(false));
@@ -152,6 +159,9 @@ function readLLMConfigFromInputs(){
   return {
     mode:(els.genMode?.value||"auto"),
     minPerArena:Math.round(clampNum(els.genMinPerArena?.value,3,20,6)),
+    templateShuffle:Math.round(clampNum(els.genTemplateShuffle?.value,0,100,55)),
+    templateTrim:Math.round(clampNum(els.genTemplateTrim?.value,0,70,25)),
+    templateCandidates:Math.round(clampNum(els.genTemplateCandidates?.value,1,20,8)),
     baseUrl:(els.llmBaseUrl?.value||"https://api.openai.com/v1").trim(),
     model:(els.llmModel?.value||"gpt-4.1-mini").trim(),
     apiKey:(els.llmApiKey?.value||"").trim(),
@@ -163,6 +173,9 @@ function readLLMConfigFromInputs(){
 function applyLLMConfigToInputs(){
   if(els.genMode) els.genMode.value=state.llmConfig.mode||"auto";
   if(els.genMinPerArena) els.genMinPerArena.value=String(state.llmConfig.minPerArena||6);
+  if(els.genTemplateShuffle) els.genTemplateShuffle.value=String(Math.round(clampNum(state.llmConfig.templateShuffle,0,100,55)));
+  if(els.genTemplateTrim) els.genTemplateTrim.value=String(Math.round(clampNum(state.llmConfig.templateTrim,0,70,25)));
+  if(els.genTemplateCandidates) els.genTemplateCandidates.value=String(Math.round(clampNum(state.llmConfig.templateCandidates,1,20,8)));
   if(els.llmBaseUrl) els.llmBaseUrl.value=state.llmConfig.baseUrl||"https://api.openai.com/v1";
   if(els.llmModel) els.llmModel.value=state.llmConfig.model||"gpt-4.1-mini";
   if(els.llmApiKey) els.llmApiKey.value=state.llmConfig.apiKey||"";
@@ -186,6 +199,9 @@ function getLLMRequestConfig(){
   return {
     mode:state.llmConfig.mode||"auto",
     minPerArena:Math.round(clampNum(state.llmConfig.minPerArena,3,20,6)),
+    templateShuffle:Math.round(clampNum(state.llmConfig.templateShuffle,0,100,55)),
+    templateTrim:Math.round(clampNum(state.llmConfig.templateTrim,0,70,25)),
+    templateCandidates:Math.round(clampNum(state.llmConfig.templateCandidates,1,20,8)),
     baseUrl:(state.llmConfig.baseUrl||"https://api.openai.com/v1").trim(),
     model:(state.llmConfig.model||"gpt-4.1-mini").trim(),
     apiKey:(state.llmConfig.apiKey||"").trim(),
@@ -1547,6 +1563,294 @@ function constrainSequenceByFishCap(groupIds,gapMs,maxFish,bossGroupId,mustKeepS
   return seq;
 }
 
+function collectBaseRowsForArena(arenaId){
+  const rows=[];
+  for(const row of state.scripts){
+    const arenaIds=parseIds(row.arenaIds);
+    if(!arenaIds.includes(arenaId)) continue;
+    rows.push(normalizeScriptRow(row));
+  }
+  return rows;
+}
+
+function pickBossFromArenaRows(rows,configuredPool){
+  const counter=new Map();
+  for(const row of rows){
+    for(const gid of parseIds(row.groupIds)){
+      if(!groupHasBoss(state.groupMap.get(gid))) continue;
+      counter.set(gid,(counter.get(gid)||0)+1);
+    }
+  }
+  if(counter.size){
+    const ranked=Array.from(counter.entries()).sort((a,b)=>{
+      if(a[1]!==b[1]) return b[1]-a[1];
+      const pa=groupAvgPayoutById(a[0]);
+      const pb=groupAvgPayoutById(b[0]);
+      if(pa!==pb) return pb-pa;
+      return a[0]-b[0];
+    });
+    return ranked[0][0];
+  }
+  const fallback=(Array.isArray(configuredPool)?configuredPool:[])
+    .map(g=>g.id)
+    .filter(id=>groupHasBoss(state.groupMap.get(id)))
+    .sort((a,b)=>groupAvgPayoutById(b)-groupAvgPayoutById(a));
+  return fallback[0]||0;
+}
+
+function shuffleByStrength(seq,strength,rng){
+  const out=(Array.isArray(seq)?seq:[]).slice();
+  if(out.length<2) return out;
+  const s=clamp(num(strength,55),0,100);
+  const swaps=Math.max(1,Math.round((out.length-1)*(s/28)));
+  for(let i=0;i<swaps;i++){
+    const a=randomInt(rng,0,out.length-1);
+    const b=randomInt(rng,0,out.length-1);
+    if(a===b) continue;
+    const tmp=out[a];
+    out[a]=out[b];
+    out[b]=tmp;
+  }
+  return out;
+}
+
+function interleaveLowHigh(sortedAsc){
+  const arr=(Array.isArray(sortedAsc)?sortedAsc:[]).slice();
+  if(arr.length<=2) return arr;
+  const out=[];
+  let i=0;
+  let j=arr.length-1;
+  while(i<=j){
+    out.push(arr[i]);
+    i+=1;
+    if(i<=j){
+      out.push(arr[j]);
+      j-=1;
+    }
+  }
+  return out;
+}
+
+function reorderByStagePayout(seq,progress,rng,bossGroupId){
+  const groups=(Array.isArray(seq)?seq:[]).filter(gid=>gid>0);
+  if(!groups.length) return [];
+  const p=clamp(Number(progress)||0,0,1);
+  const boss=groups.filter(gid=>gid===bossGroupId);
+  const normal=groups.filter(gid=>gid!==bossGroupId);
+  const sortedAsc=normal.slice().sort((a,b)=>{
+    const pa=groupAvgPayoutById(a)+(typeof rng==="function"?rng()*0.35:0);
+    const pb=groupAvgPayoutById(b)+(typeof rng==="function"?rng()*0.35:0);
+    if(pa!==pb) return pa-pb;
+    return a-b;
+  });
+  let ordered=sortedAsc;
+  if(p>=0.72){
+    ordered=sortedAsc.slice().reverse();
+  }else if(p>=0.38){
+    ordered=interleaveLowHigh(sortedAsc);
+  }
+  return ordered.concat(boss);
+}
+
+function trimSequenceByRatio(seq,trimRatio,rng,mustKeepSet){
+  const out=(Array.isArray(seq)?seq:[]).slice();
+  if(out.length<=1) return out;
+  const keep=mustKeepSet instanceof Set?mustKeepSet:new Set();
+  const ratio=clamp(num(trimRatio,25),0,70)/100;
+  const targetLen=Math.max(1,Math.round(out.length*(1-ratio)));
+  let removeNeed=Math.max(0,out.length-targetLen);
+  while(removeNeed>0&&out.length>1){
+    const removable=[];
+    for(let i=0;i<out.length;i++){
+      if(keep.has(out[i])) continue;
+      removable.push(i);
+    }
+    if(!removable.length) break;
+    const ridx=removable[randomInt(rng,0,removable.length-1)];
+    out.splice(ridx,1);
+    removeNeed-=1;
+  }
+  return out;
+}
+
+function reduceNeighborRepeats(seq,arenaPool,rng,bossGroupId){
+  const out=(Array.isArray(seq)?seq:[]).slice();
+  const pool=(Array.isArray(arenaPool)?arenaPool:[]).filter(gid=>gid>0);
+  if(out.length<2||!pool.length) return out;
+  for(let i=1;i<out.length;i++){
+    if(out[i]!==out[i-1]) continue;
+    const candidates=pool.filter(gid=>gid!==out[i-1]&&gid!==bossGroupId);
+    if(!candidates.length) continue;
+    out[i]=candidates[randomInt(rng,0,candidates.length-1)];
+  }
+  return out;
+}
+
+function enforceBossFinalRule(rows,bossGroupId,arenaPool,rng){
+  const out=(Array.isArray(rows)?rows:[]).map(row=>({
+    scriptId:num(row.scriptId,0),
+    gapTimeMs:Math.max(0,num(row.gapTimeMs,0)),
+    arenaIds:parseIds(row.arenaIds),
+    type:num(row.type,1),
+    groupIds:parseIds(row.groupIds)
+  }));
+  if(!out.length||bossGroupId<=0) return out;
+  for(const row of out){
+    row.groupIds=row.groupIds.filter(gid=>gid!==bossGroupId);
+  }
+  const last=out[out.length-1];
+  const nonBossPool=(Array.isArray(arenaPool)?arenaPool:[]).filter(gid=>gid!==bossGroupId);
+  while(last.groupIds.length<2&&nonBossPool.length){
+    last.groupIds.push(nonBossPool[randomInt(rng,0,nonBossPool.length-1)]);
+  }
+  const insertPos=Math.min(last.groupIds.length,Math.max(1,Math.floor((last.groupIds.length+1)/2)));
+  last.groupIds.splice(insertPos,0,bossGroupId);
+  for(const row of out){
+    row.type=row.groupIds.includes(bossGroupId)?2:1;
+  }
+  return out;
+}
+
+function evaluateTemplateArenaRows(rows,bossGroupId){
+  const flat=[];
+  const payouts=[];
+  const peaks=[];
+  for(const row of rows){
+    const gids=parseIds(row.groupIds);
+    for(const gid of gids){
+      flat.push(gid);
+      payouts.push(groupAvgPayoutById(gid));
+    }
+    peaks.push(calcMaxConcurrentFish(gids,row.gapTimeMs));
+  }
+  const total=Math.max(1,flat.length);
+  const uniqueRatio=(new Set(flat)).size/total;
+  let repeatCount=0;
+  for(let i=1;i<flat.length;i++){
+    if(flat[i]===flat[i-1]) repeatCount+=1;
+  }
+  const repeatScore=1-(repeatCount/Math.max(1,total-1));
+  const mid=Math.max(1,Math.floor(payouts.length/2));
+  const earlyAvg=payouts.slice(0,mid).reduce((a,b)=>a+b,0)/Math.max(1,mid);
+  const lateAvg=payouts.slice(mid).reduce((a,b)=>a+b,0)/Math.max(1,payouts.length-mid);
+  const tension=((lateAvg-earlyAvg)/Math.max(1,Math.abs(earlyAvg)+Math.abs(lateAvg)+1))+0.5;
+  const tensionScore=clamp(tension,0,1);
+  const bossHits=flat.filter(gid=>gid===bossGroupId).length;
+  const lastIds=parseIds(rows[rows.length-1]?.groupIds||[]);
+  const bossPos=lastIds.indexOf(bossGroupId);
+  const bossOk=bossHits===1&&bossPos>=Math.max(1,Math.floor(lastIds.length/2));
+  const avgPeak=peaks.length?peaks.reduce((a,b)=>a+b,0)/peaks.length:0;
+  const pressureScore=clamp((55-avgPeak)/35,0,1);
+  const scoreRaw=
+    uniqueRatio*0.30+
+    repeatScore*0.22+
+    tensionScore*0.22+
+    (bossOk?1:0)*0.16+
+    pressureScore*0.10;
+  return {
+    score:Math.round(clamp(scoreRaw,0,1)*100),
+    metrics:{
+      uniqueRatio:Number(uniqueRatio.toFixed(3)),
+      repeatScore:Number(repeatScore.toFixed(3)),
+      tensionScore:Number(tensionScore.toFixed(3)),
+      bossOk,
+      avgPeak:Number(avgPeak.toFixed(2))
+    }
+  };
+}
+
+function generateTemplateCandidate(minPerArena,templateOptions,seed){
+  const rng=createSeededRng(seed);
+  const minRows=Math.max(1,num(minPerArena,6));
+  const shuffleStrength=clamp(num(templateOptions?.templateShuffle,55),0,100);
+  const trimRatio=clamp(num(templateOptions?.templateTrim,25),0,70);
+  let nextId=state.scripts.reduce((m,r)=>Math.max(m,r.scriptId),0)+1;
+  const scripts=[];
+  const issues=[`seed=${seed}`];
+  const arenaScores=[];
+  const arenaMetrics=[];
+
+  for(const arena of state.arenas){
+    const baseRows=collectBaseRowsForArena(arena.id);
+    if(!baseRows.length){
+      issues.push(`Arena ${arena.id} 缺少基础脚本，已跳过`);
+      continue;
+    }
+    const configuredPool=collectConfiguredGroupsForArena(arena.id);
+    const arenaPool=uniq(
+      baseRows
+        .flatMap(row=>parseIds(row.groupIds))
+        .filter(gid=>gid>0)
+    );
+    if(!arenaPool.length){
+      issues.push(`Arena ${arena.id} 基础脚本没有有效Group，已跳过`);
+      continue;
+    }
+    const bossGroupId=pickBossFromArenaRows(baseRows,configuredPool);
+    const rowCount=Math.max(minRows,baseRows.length);
+    const arenaRows=[];
+    for(let i=0;i<rowCount;i++){
+      const base=baseRows[i%baseRows.length];
+      let groupIds=parseIds(base.groupIds);
+      if(!groupIds.length){
+        groupIds=[arenaPool[randomInt(rng,0,arenaPool.length-1)]];
+      }
+      const progress=rowCount<=1?1:i/(rowCount-1);
+      groupIds=shuffleByStrength(groupIds,shuffleStrength,rng);
+      groupIds=reorderByStagePayout(groupIds,progress,rng,bossGroupId);
+      const mustKeep=new Set();
+      if(i===rowCount-1&&bossGroupId>0) mustKeep.add(bossGroupId);
+      groupIds=trimSequenceByRatio(groupIds,trimRatio,rng,mustKeep);
+      if(i<rowCount-1&&bossGroupId>0){
+        groupIds=groupIds.filter(gid=>gid!==bossGroupId);
+      }
+      if(!groupIds.length){
+        const fallback=arenaPool.filter(gid=>gid!==bossGroupId);
+        groupIds=[(fallback.length?fallback:arenaPool)[randomInt(rng,0,(fallback.length?fallback:arenaPool).length-1)]];
+      }
+      groupIds=reduceNeighborRepeats(groupIds,arenaPool,rng,bossGroupId);
+      const stageGap=buildGapMs(i,rowCount);
+      const baseGap=Math.max(0,num(base.gapTimeMs,0));
+      const gapMs=Math.round(clamp((baseGap*0.38)+(stageGap*0.62),700,4800)/50)*50;
+      arenaRows.push({
+        scriptId:nextId++,
+        gapTimeMs:gapMs,
+        arenaIds:[arena.id],
+        type:1,
+        groupIds
+      });
+    }
+    const finalRows=enforceBossFinalRule(arenaRows,bossGroupId,arenaPool,rng);
+    const evalResult=evaluateTemplateArenaRows(finalRows,bossGroupId);
+    arenaScores.push(evalResult.score);
+    arenaMetrics.push({arenaId:arena.id,...evalResult.metrics});
+    scripts.push(...finalRows);
+  }
+
+  const score=arenaScores.length?Math.round(arenaScores.reduce((a,b)=>a+b,0)/arenaScores.length):0;
+  return {scripts,issues,score,seed,metrics:arenaMetrics};
+}
+
+function generateScriptsByTemplate(minPerArena,templateOptions){
+  if(!state.arenas.length) return {scripts:[],issues:["无可用渔场"],score:0,seed:0,metrics:[]};
+  const candidateCount=Math.max(1,Math.round(clampNum(templateOptions?.templateCandidates,1,20,8)));
+  const baseSeed=(Number(templateOptions?.seed)||Date.now())>>>0;
+  let best=null;
+  for(let i=0;i<candidateCount;i++){
+    const seed=(baseSeed+Math.imul(i+1,0x9E3779B1))>>>0;
+    const candidate=generateTemplateCandidate(minPerArena,templateOptions,seed);
+    if(!best||candidate.score>best.score||(candidate.score===best.score&&candidate.scripts.length>best.scripts.length)){
+      best=candidate;
+    }
+  }
+  if(!best) return {scripts:[],issues:["模板生成失败"],score:0,seed:baseSeed,metrics:[]};
+  const metricLine=best.metrics.map(x=>`A${x.arenaId}:S${x.bossOk?"1":"0"}/U${x.uniqueRatio}/T${x.tensionScore}`).join(" | ");
+  const issues=(best.issues||[]).slice(0,6);
+  issues.push(`templateScore=${best.score}`);
+  if(metricLine) issues.push(`metrics=${metricLine}`);
+  return {...best,issues};
+}
+
 function generateScriptsForAllArenas(minPerArena,seedValue){
   if(!state.arenas.length) return {scripts:[],issues:["无可用渔场"]};
 
@@ -1865,6 +2169,7 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
   let sourceTag="smart-rule";
   let fallbackReason="";
   let aiAttemptMeta=null;
+  let templateMeta=null;
   let localSeed=0;
   const runLocal=(reasonText)=>{
     if(reasonText) pushAIStatus(reasonText,true);
@@ -1874,8 +2179,29 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
     sourceTag="smart-rule";
     pushAIStatus(`本地算法生成完成：${(generatedResult.scripts||[]).length}行（seed=${localSeed}）`);
   };
+  const runTemplate=(reasonText)=>{
+    if(reasonText) pushAIStatus(reasonText,false);
+    const templateCfg={
+      templateShuffle:Math.round(clampNum(llmCfg.templateShuffle,0,100,55)),
+      templateTrim:Math.round(clampNum(llmCfg.templateTrim,0,70,25)),
+      templateCandidates:Math.round(clampNum(llmCfg.templateCandidates,1,20,8)),
+      seed:(Date.now()^Math.floor(Math.random()*0x7fffffff))>>>0
+    };
+    generatedResult=generateScriptsByTemplate(minPerArena,templateCfg);
+    sourceTag="template-rule";
+    templateMeta={
+      ...templateCfg,
+      selectedSeed:generatedResult.seed||templateCfg.seed,
+      selectedScore:generatedResult.score||0,
+      metrics:generatedResult.metrics||[]
+    };
+    pushAIStatus(`模板生成完成：${(generatedResult.scripts||[]).length}行（score=${generatedResult.score||0}, seed=${generatedResult.seed||templateCfg.seed}）`);
+  };
 
-  if(mode==="local"){
+  if(mode==="template"){
+    runTemplate("当前为模板重排模式：仅基于基础脚本打乱顺序和削减数量，不新增Group。");
+    aiAttemptMeta={ok:false,reason:"mode=template"};
+  }else if(mode==="local"){
     runLocal("当前为仅本地模式，未调用AI。");
     aiAttemptMeta={ok:false,reason:"mode=local"};
   }else{
@@ -1920,16 +2246,26 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
   }
 
   if((generatedResult.issues||[]).length){
-    pushAIStatus(`部分渔场被跳过：${generatedResult.issues[0]}`,true);
+    const warnIssue=(generatedResult.issues||[]).find(x=>String(x).includes("跳过"));
+    if(warnIssue) pushAIStatus(`部分渔场被跳过：${warnIssue}`,true);
+    const scoreIssue=(generatedResult.issues||[]).find(x=>String(x).startsWith("templateScore="));
+    if(scoreIssue) pushAIStatus(`模板选优结果：${scoreIssue}`);
   }
   if(!state.aiReview.lastResponse){
+    const explain=sourceTag==="smart-rule"
+      ?"当前结果来自本地算法（非AI直接返回）"
+      :sourceTag==="template-rule"
+        ?"当前结果来自模板重排算法（只打乱/缩减，不新增Group）"
+        :"当前结果来自AI";
     setReviewRawResponse({
       ok:true,
       source:sourceTag,
       rows:generated.length,
       issues:generatedResult.issues||[],
-      explain:sourceTag==="smart-rule"?"当前结果来自本地算法（非AI直接返回）":"当前结果来自AI",
+      explain,
       mode,
+      template:templateMeta,
+      score:generatedResult.score,
       localSeed,
       fallbackReason,
       aiAttempt:aiAttemptMeta
