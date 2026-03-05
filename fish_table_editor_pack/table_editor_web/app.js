@@ -9,7 +9,7 @@ const state={
   llmConfig:{
     mode:"auto",minPerArena:6,
     baseUrl:"https://api.openai.com/v1",model:"gpt-4.1-mini",apiKey:"",temperature:0.2,maxTokens:2048,
-    templateShuffle:55,templateTrim:25,templateCandidates:8,minConcurrentFish:12,maxConcurrentFish:45
+    templateShuffle:55,templateTrim:25,templateCandidates:8,minConcurrentFish:12,maxConcurrentFish:30
   },
   timelineScale:{pxPerMs:0.005,baseX:70},
   gapDrag:{active:false,scriptIndex:-1,startX:0,startGapMs:0,pxPerMs:0.005},
@@ -164,8 +164,8 @@ function readLLMConfigFromInputs(){
     templateShuffle:Math.round(clampNum(els.genTemplateShuffle?.value,0,100,55)),
     templateTrim:Math.round(clampNum(els.genTemplateTrim?.value,0,70,25)),
     templateCandidates:Math.round(clampNum(els.genTemplateCandidates?.value,1,20,8)),
-    minConcurrentFish:Math.round(clampNum(els.genMinConcurrentFish?.value,5,60,12)),
-    maxConcurrentFish:Math.round(clampNum(els.genMaxConcurrentFish?.value,10,120,45)),
+    minConcurrentFish:Math.round(clampNum(els.genMinConcurrentFish?.value,5,28,12)),
+    maxConcurrentFish:Math.round(clampNum(els.genMaxConcurrentFish?.value,10,30,30)),
     baseUrl:(els.llmBaseUrl?.value||"https://api.openai.com/v1").trim(),
     model:(els.llmModel?.value||"gpt-4.1-mini").trim(),
     apiKey:(els.llmApiKey?.value||"").trim(),
@@ -180,8 +180,8 @@ function applyLLMConfigToInputs(){
   if(els.genTemplateShuffle) els.genTemplateShuffle.value=String(Math.round(clampNum(state.llmConfig.templateShuffle,0,100,55)));
   if(els.genTemplateTrim) els.genTemplateTrim.value=String(Math.round(clampNum(state.llmConfig.templateTrim,0,70,25)));
   if(els.genTemplateCandidates) els.genTemplateCandidates.value=String(Math.round(clampNum(state.llmConfig.templateCandidates,1,20,8)));
-  if(els.genMinConcurrentFish) els.genMinConcurrentFish.value=String(Math.round(clampNum(state.llmConfig.minConcurrentFish,5,60,12)));
-  if(els.genMaxConcurrentFish) els.genMaxConcurrentFish.value=String(Math.round(clampNum(state.llmConfig.maxConcurrentFish,10,120,45)));
+  if(els.genMinConcurrentFish) els.genMinConcurrentFish.value=String(Math.round(clampNum(state.llmConfig.minConcurrentFish,5,28,12)));
+  if(els.genMaxConcurrentFish) els.genMaxConcurrentFish.value=String(Math.round(clampNum(state.llmConfig.maxConcurrentFish,10,30,30)));
   if(els.llmBaseUrl) els.llmBaseUrl.value=state.llmConfig.baseUrl||"https://api.openai.com/v1";
   if(els.llmModel) els.llmModel.value=state.llmConfig.model||"gpt-4.1-mini";
   if(els.llmApiKey) els.llmApiKey.value=state.llmConfig.apiKey||"";
@@ -208,8 +208,8 @@ function getLLMRequestConfig(){
     templateShuffle:Math.round(clampNum(state.llmConfig.templateShuffle,0,100,55)),
     templateTrim:Math.round(clampNum(state.llmConfig.templateTrim,0,70,25)),
     templateCandidates:Math.round(clampNum(state.llmConfig.templateCandidates,1,20,8)),
-    minConcurrentFish:Math.round(clampNum(state.llmConfig.minConcurrentFish,5,60,12)),
-    maxConcurrentFish:Math.round(clampNum(state.llmConfig.maxConcurrentFish,10,120,45)),
+    minConcurrentFish:Math.round(clampNum(state.llmConfig.minConcurrentFish,5,28,12)),
+    maxConcurrentFish:Math.round(clampNum(state.llmConfig.maxConcurrentFish,10,30,30)),
     baseUrl:(state.llmConfig.baseUrl||"https://api.openai.com/v1").trim(),
     model:(state.llmConfig.model||"gpt-4.1-mini").trim(),
     apiKey:(state.llmConfig.apiKey||"").trim(),
@@ -248,7 +248,7 @@ function renderGenerateReport(scripts){
   };
   for(const row of rows){
     const arenaIds=parseIds(row.arenaIds);
-    const gids=parseIds(row.groupIds);
+    const gids=parseIdsKeep(row.groupIds);
     for(const arenaId of arenaIds){
       const st=bump(arenaId);
       st.scripts+=1;
@@ -400,7 +400,7 @@ function buildLocalBaseDataSnapshot(){
     groups:{count:state.groups.length,sample:state.groups.slice(0,5).map(g=>({id:g.id,avgPayout:g.avgPayout,hasBoss:Boolean(g.hasBoss),hasSkill:Boolean(g.hasSkill)}))},
     fish:{count:state.fish.length},
     routes:{count:state.routes.length},
-    scripts:{count:state.scripts.length,sample:state.scripts.slice(0,3).map(s=>({scriptId:s.scriptId,arenaIds:parseIds(s.arenaIds),groupIds:parseIds(s.groupIds).slice(0,8)}))}
+    scripts:{count:state.scripts.length,sample:state.scripts.slice(0,3).map(s=>({scriptId:s.scriptId,arenaIds:parseIds(s.arenaIds),groupIds:parseIdsKeep(s.groupIds).slice(0,8)}))}
   };
 }
 
@@ -636,7 +636,7 @@ async function applyReviewScripts(){
 }
 
 function normalizeScriptRow(row){
-  return {scriptId:num(row.scriptId,0),gapTimeMs:Math.max(0,num(row.gapTimeMs,0)),arenaIds:parseIds(row.arenaIds),type:num(row.type,1),groupIds:parseIds(row.groupIds)};
+  return {scriptId:num(row.scriptId,0),gapTimeMs:Math.max(0,num(row.gapTimeMs,0)),arenaIds:parseIds(row.arenaIds),type:num(row.type,1),groupIds:parseIdsKeep(row.groupIds)};
 }
 
 function renderAll(){
@@ -679,7 +679,7 @@ function filterGroups(keyword,bossFilter){
 function getGroupFishList(g){
   if(!g) return [];
   if(Array.isArray(g.fishList)&&g.fishList.length) return g.fishList;
-  const ids=parseIds(g.fishIds||[]);
+  const ids=parseIdsKeep(g.fishIds||[]);
   if(!ids.length) return [];
   return ids.map(id=>state.fishMap.get(id)||{
     id,name:`Fish-${id}`,cnName:`Fish-${id}`,cnFullName:`Fish-${id}`,fishType:0,payout:0,payoutText:"0"
@@ -742,6 +742,13 @@ function renderScriptRow(row,idx,dup,timing){
   if(unknownGroups.length) warn.push(`<span class="chip warn">未知Group:${escapeHtml(joinIds(unknownGroups))}</span>`);
   if(unknownArenas.length) warn.push(`<span class="chip warn">未知Arena:${escapeHtml(joinIds(unknownArenas))}</span>`);
   if(row.groupIds.length>1&&row.gapTimeMs<minGapMs) warn.push(`<span class="chip warn">Group间隔过小(最小${minGapMs}ms)</span>`);
+  const bossId=row.groupIds.find(gid=>groupHasBoss(state.groupMap.get(gid)));
+  if(bossId){
+    const cover=calcBossCoverageStats(row.groupIds,row.gapTimeMs,bossId);
+    if(!cover.coverageOk){
+      warn.push(`<span class="chip warn">Boss陪衬不足 覆盖${Math.round((cover.coverageRatio||0)*100)}% 空窗${Math.round(cover.maxUncoveredMs||0)}ms</span>`);
+    }
+  }
   return `<tr data-idx="${idx}">
     <td class="drag-cell w-order"><span class="drag-handle" draggable="true" data-drag-idx="${idx}" title="拖拽排序">↕</span></td>
     <td class="w-index">${idx+1}</td>
@@ -1069,7 +1076,8 @@ function onScriptInput(ev){
   const idx=Number(tr.dataset.idx);
   const field=input.dataset.field;
   if(!state.scripts[idx]||!field) return;
-  if(field==="groupIds"||field==="arenaIds") state.scripts[idx][field]=parseIds(input.value);
+  if(field==="groupIds") state.scripts[idx][field]=parseIdsKeep(input.value);
+  else if(field==="arenaIds") state.scripts[idx][field]=parseIds(input.value);
   else if(field==="scriptId"||field==="type") state.scripts[idx][field]=num(input.value,0);
   else if(field==="gapTimeMs"){
     const raw=Math.max(0,num(input.value,0));
@@ -1584,7 +1592,7 @@ function collectBaseRowsForArena(arenaId){
 function pickBossFromArenaRows(rows,configuredPool){
   const counter=new Map();
   for(const row of rows){
-    for(const gid of parseIds(row.groupIds)){
+    for(const gid of parseIdsKeep(row.groupIds)){
       if(!groupHasBoss(state.groupMap.get(gid))) continue;
       counter.set(gid,(counter.get(gid)||0)+1);
     }
@@ -1700,7 +1708,7 @@ function enforceBossFinalRule(rows,bossGroupId,arenaPool,rng){
     gapTimeMs:Math.max(0,num(row.gapTimeMs,0)),
     arenaIds:parseIds(row.arenaIds),
     type:num(row.type,1),
-    groupIds:parseIds(row.groupIds)
+    groupIds:parseIdsKeep(row.groupIds)
   }));
   if(!out.length||bossGroupId<=0) return out;
   for(const row of out){
@@ -1724,7 +1732,7 @@ function evaluateTemplateArenaRows(rows,bossGroupId){
   const payouts=[];
   const peaks=[];
   for(const row of rows){
-    const gids=parseIds(row.groupIds);
+    const gids=parseIdsKeep(row.groupIds);
     for(const gid of gids){
       flat.push(gid);
       payouts.push(groupAvgPayoutById(gid));
@@ -1744,7 +1752,7 @@ function evaluateTemplateArenaRows(rows,bossGroupId){
   const tension=((lateAvg-earlyAvg)/Math.max(1,Math.abs(earlyAvg)+Math.abs(lateAvg)+1))+0.5;
   const tensionScore=clamp(tension,0,1);
   const bossHits=flat.filter(gid=>gid===bossGroupId).length;
-  const lastIds=parseIds(rows[rows.length-1]?.groupIds||[]);
+  const lastIds=parseIdsKeep(rows[rows.length-1]?.groupIds||[]);
   const bossPos=lastIds.indexOf(bossGroupId);
   const bossOk=bossHits===1&&bossPos>=Math.max(1,Math.floor(lastIds.length/2));
   const avgPeak=peaks.length?peaks.reduce((a,b)=>a+b,0)/peaks.length:0;
@@ -1787,7 +1795,7 @@ function generateTemplateCandidate(minPerArena,templateOptions,seed){
     const configuredPool=collectConfiguredGroupsForArena(arena.id);
     const arenaPool=uniq(
       baseRows
-        .flatMap(row=>parseIds(row.groupIds))
+        .flatMap(row=>parseIdsKeep(row.groupIds))
         .filter(gid=>gid>0)
     );
     if(!arenaPool.length){
@@ -1799,7 +1807,7 @@ function generateTemplateCandidate(minPerArena,templateOptions,seed){
     const arenaRows=[];
     for(let i=0;i<rowCount;i++){
       const base=baseRows[i%baseRows.length];
-      let groupIds=parseIds(base.groupIds);
+      let groupIds=parseIdsKeep(base.groupIds);
       if(!groupIds.length){
         groupIds=[arenaPool[randomInt(rng,0,arenaPool.length-1)]];
       }
@@ -1868,7 +1876,7 @@ function reduceNeighborRepeatsDeterministic(seq,poolIds,bossGroupId){
 }
 
 function deterministicStageRemix(groupIds,progress,shuffleStrength,trimRatio,rowIndex){
-  const ids=parseIds(groupIds).filter(gid=>gid>0);
+  const ids=parseIdsKeep(groupIds).filter(gid=>gid>0);
   if(!ids.length) return [];
   const asc=ids.slice().sort((a,b)=>{
     const pa=groupAvgPayoutById(a);
@@ -1898,6 +1906,156 @@ function deterministicStageRemix(groupIds,progress,shuffleStrength,trimRatio,row
   return uniq(remixed);
 }
 
+function groupClearDurationMsById(groupId){
+  const timing=buildGroupTiming(groupId);
+  const clearMs=Math.max(0,num(timing?.clearDurationMs,0));
+  if(clearMs>0) return clearMs;
+  return estimateGroupDurationMs(groupId);
+}
+
+function calcBossCoverageStats(groupIds,gapMs,bossGroupId){
+  const ids=parseIdsKeep(groupIds).filter(gid=>gid>0);
+  const gap=Math.max(0,num(gapMs,0));
+  const bossIndex=ids.indexOf(bossGroupId);
+  if(bossIndex<0){
+    return {
+      hasBoss:false,bossIndex:-1,bossStartMs:0,bossEndMs:0,bossDurationMs:0,
+      coveredMs:0,coverageRatio:0,maxUncoveredMs:0,largestGap:null,hasBefore:false,hasAfter:false,coverageOk:false
+    };
+  }
+  const bossStartMs=bossIndex*gap;
+  const bossDurationMs=Math.max(1000,groupClearDurationMsById(bossGroupId));
+  const bossEndMs=bossStartMs+bossDurationMs;
+  const nonBossIntervals=[];
+  let hasBefore=false;
+  let hasAfter=false;
+  for(let i=0;i<ids.length;i++){
+    const gid=ids[i];
+    if(gid===bossGroupId) continue;
+    const start=i*gap;
+    const end=start+Math.max(1000,groupClearDurationMsById(gid));
+    if(end<=bossStartMs||start>=bossEndMs) continue;
+    const clippedStart=Math.max(start,bossStartMs);
+    const clippedEnd=Math.min(end,bossEndMs);
+    if(clippedEnd<=clippedStart) continue;
+    nonBossIntervals.push({start:clippedStart,end:clippedEnd,rawStart:start,rawEnd:end});
+    if(start<=bossStartMs&&end>bossStartMs) hasBefore=true;
+    if(start<bossEndMs&&end>=bossEndMs) hasAfter=true;
+  }
+
+  nonBossIntervals.sort((a,b)=>a.start-b.start||a.end-b.end);
+  const merged=[];
+  for(const iv of nonBossIntervals){
+    if(!merged.length||iv.start>merged[merged.length-1].end){
+      merged.push({start:iv.start,end:iv.end});
+    }else{
+      merged[merged.length-1].end=Math.max(merged[merged.length-1].end,iv.end);
+    }
+  }
+
+  let coveredMs=0;
+  for(const iv of merged){
+    coveredMs+=Math.max(0,iv.end-iv.start);
+  }
+  let cursor=bossStartMs;
+  let maxUncoveredMs=0;
+  let largestGap=null;
+  for(const iv of merged){
+    if(iv.start>cursor){
+      const gapLen=iv.start-cursor;
+      if(gapLen>maxUncoveredMs){
+        maxUncoveredMs=gapLen;
+        largestGap={start:cursor,end:iv.start,length:gapLen};
+      }
+    }
+    cursor=Math.max(cursor,iv.end);
+  }
+  if(cursor<bossEndMs){
+    const gapLen=bossEndMs-cursor;
+    if(gapLen>maxUncoveredMs){
+      maxUncoveredMs=gapLen;
+      largestGap={start:cursor,end:bossEndMs,length:gapLen};
+    }
+  }
+  const coverageRatio=coveredMs/Math.max(1,bossDurationMs);
+  const coverageOk=
+    coverageRatio>=0.68&&
+    maxUncoveredMs<=Math.max(1200,Math.round(bossDurationMs*0.28))&&
+    hasBefore&&
+    hasAfter;
+  return {
+    hasBoss:true,bossIndex,bossStartMs,bossEndMs,bossDurationMs,
+    coveredMs,coverageRatio,maxUncoveredMs,largestGap,hasBefore,hasAfter,coverageOk
+  };
+}
+
+function buildBossCoveragePool(normalGroups,bossGroupId){
+  const pool=(Array.isArray(normalGroups)?normalGroups:[])
+    .filter(g=>num(g?.id,0)>0&&num(g?.id,0)!==bossGroupId)
+    .slice()
+    .sort((a,b)=>{
+      const da=groupClearDurationMsById(num(a?.id,0));
+      const db=groupClearDurationMsById(num(b?.id,0));
+      if(da!==db) return db-da;
+      const pa=num(a?.avgPayout,0);
+      const pb=num(b?.avgPayout,0);
+      if(pa!==pb) return pa-pb;
+      const fa=Math.max(1,groupFishCount(a));
+      const fb=Math.max(1,groupFishCount(b));
+      if(fa!==fb) return fa-fb;
+      return num(a?.id,0)-num(b?.id,0);
+    });
+  return pool.map(g=>num(g?.id,0));
+}
+
+function ensureBossCoverageDeterministic(groupIds,gapMs,bossGroupId,coveragePoolIds,minFish,maxFish){
+  let out=parseIdsKeep(groupIds).filter(gid=>gid>0);
+  if(!out.includes(bossGroupId)) return out;
+  const pool=uniq((Array.isArray(coveragePoolIds)?coveragePoolIds:[]).filter(gid=>gid>0&&gid!==bossGroupId));
+  if(!pool.length) return out;
+  let cursor=0;
+  for(let guard=0;guard<220;guard++){
+    const stats=calcBossCoverageStats(out,gapMs,bossGroupId);
+    if(!stats.hasBoss||stats.coverageOk) break;
+    const bossIdx=out.indexOf(bossGroupId);
+    let insertPos=bossIdx;
+    if(!stats.hasBefore){
+      insertPos=Math.max(0,bossIdx-1);
+    }else if(!stats.hasAfter){
+      insertPos=Math.min(out.length,bossIdx+1);
+    }else if(stats.largestGap){
+      const midMs=(stats.largestGap.start+stats.largestGap.end)/2;
+      insertPos=clamp(Math.round(midMs/Math.max(1,gapMs)),0,out.length);
+    }else{
+      insertPos=Math.min(out.length,bossIdx+1);
+    }
+
+    const targetLen=stats.largestGap?stats.largestGap.length:0;
+    let chosen=0;
+    for(let i=0;i<pool.length;i++){
+      const gid=pool[(cursor+i)%pool.length];
+      const dur=groupClearDurationMsById(gid);
+      if(dur>=targetLen*0.9){
+        chosen=gid;
+        cursor=(cursor+i+1)%pool.length;
+        break;
+      }
+    }
+    if(chosen<=0){
+      chosen=pool[cursor%pool.length];
+      cursor=(cursor+1)%pool.length;
+    }
+    if(insertPos>0&&out[insertPos-1]===chosen) insertPos=Math.min(out.length,insertPos+1);
+    out.splice(insertPos,0,chosen);
+    out=constrainSequenceByFishRangeDeterministic(out,gapMs,minFish,maxFish,bossGroupId,pool,new Set([bossGroupId]));
+    if(!out.includes(bossGroupId)){
+      const p=Math.min(out.length,Math.max(1,Math.floor(out.length*0.62)));
+      out.splice(p,0,bossGroupId);
+    }
+  }
+  return out;
+}
+
 function buildDensityPoolIds(groups){
   return (Array.isArray(groups)?groups:[])
     .slice()
@@ -1915,7 +2073,7 @@ function buildDensityPoolIds(groups){
 }
 
 function constrainSequenceByFishRangeDeterministic(seq,gapMs,minFish,maxFish,bossGroupId,poolIds,mustKeepSet){
-  let out=parseIds(seq).filter(gid=>gid>0);
+  let out=parseIdsKeep(seq).filter(gid=>gid>0);
   const keep=mustKeepSet instanceof Set?mustKeepSet:new Set();
   const minTarget=Math.max(1,num(minFish,12));
   const maxTarget=Math.max(minTarget+1,num(maxFish,45));
@@ -1947,7 +2105,7 @@ function enforceBossPlacementDeterministic(rows,bossGroupId,escortIds,minRatio,m
     gapTimeMs:Math.max(0,num(row.gapTimeMs,0)),
     arenaIds:parseIds(row.arenaIds),
     type:num(row.type,1),
-    groupIds:parseIds(row.groupIds)
+    groupIds:parseIdsKeep(row.groupIds)
   }));
   if(!out.length||bossGroupId<=0) return out;
 
@@ -2011,8 +2169,8 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
   const shuffleStrength=Math.round(clampNum(templateOptions?.templateShuffle,0,100,55));
   const trimRatio=Math.round(clampNum(templateOptions?.templateTrim,0,70,25));
   const candidateRounds=Math.max(1,Math.round(clampNum(templateOptions?.templateCandidates,1,20,8)));
-  const minFish=Math.round(clampNum(templateOptions?.minConcurrentFish,5,60,12));
-  const maxFish=Math.max(minFish+2,Math.round(clampNum(templateOptions?.maxConcurrentFish,10,120,45)));
+  const minFish=Math.round(clampNum(templateOptions?.minConcurrentFish,5,28,12));
+  const maxFish=Math.max(minFish+2,Math.round(clampNum(templateOptions?.maxConcurrentFish,10,30,30)));
   const bossMinRatio=0.55;
   const bossMaxRatio=0.78;
 
@@ -2057,8 +2215,9 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
     const escortIds=(lowPool.length?lowPool:normalPool)
       .map(g=>num(g?.id,0))
       .filter(id=>id>0&&id!==bossGroupId);
+    const coveragePoolIds=buildBossCoveragePool(normalPool,bossGroupId);
     const densityIds=buildDensityPoolIds(lowPool.length?lowPool:normalPool).filter(id=>id!==bossGroupId);
-    const fallbackIds=(densityIds.length?densityIds:escortIds);
+    const fallbackIds=(densityIds.length?densityIds:(escortIds.length?escortIds:coveragePoolIds));
     if(!fallbackIds.length){
       issues.push(`Arena ${arena.id} 缺少可用于陪衬的普通组，已跳过`);
       continue;
@@ -2099,9 +2258,10 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       const trialBossPos=trialLast.groupIds.indexOf(bossGroupId);
       const trialKeep=new Set([bossGroupId,trialLast.groupIds[trialBossPos-1],trialLast.groupIds[trialBossPos+1]].filter(x=>num(x,0)>0));
       trialLast.groupIds=constrainSequenceByFishRangeDeterministic(trialLast.groupIds,trialLast.gapTimeMs,minFish,maxFish,bossGroupId,fallbackIds,trialKeep);
+      trialLast.groupIds=ensureBossCoverageDeterministic(trialLast.groupIds,trialLast.gapTimeMs,bossGroupId,coveragePoolIds,minFish,maxFish);
       arranged=enforceBossPlacementDeterministic(arranged,bossGroupId,escortIds,bossMinRatio,bossMaxRatio);
 
-      const lastIds=parseIds(arranged[arranged.length-1]?.groupIds||[]);
+      const lastIds=parseIdsKeep(arranged[arranged.length-1]?.groupIds||[]);
       const finalBossPos=lastIds.indexOf(bossGroupId);
       const minBossIdx=Math.max(1,Math.ceil(lastIds.length*bossMinRatio)-1);
       const maxBossIdx=Math.max(minBossIdx,Math.min(lastIds.length-2,Math.floor(lastIds.length*bossMaxRatio)-1));
@@ -2110,15 +2270,17 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       const peaks=arranged.map(row=>calcMaxConcurrentFish(row.groupIds,row.gapTimeMs));
       const peakMin=peaks.length?Math.min(...peaks):0;
       const peakMax=peaks.length?Math.max(...peaks):0;
+      const coverageStats=calcBossCoverageStats(lastIds,arranged[arranged.length-1]?.gapTimeMs,bossGroupId);
       const evalResult=evaluateTemplateArenaRows(arranged,bossGroupId);
       const penalty=
         (bossWindowOk?0:25)+
         (bossEscortOk?0:15)+
-        ((peakMin<minFish||peakMax>maxFish)?18:0);
+        ((peakMin<minFish||peakMax>maxFish)?18:0)+
+        (coverageStats.coverageOk?0:24);
       const roundScore=evalResult.score-penalty;
       if(round===0||roundScore>bestArenaEval.score){
         bestArenaRows=arranged;
-        bestArenaEval={score:roundScore,metrics:evalResult.metrics};
+        bestArenaEval={score:roundScore,metrics:{...evalResult.metrics,bossCoverage:Number((coverageStats.coverageRatio||0).toFixed(3)),bossGapMs:Math.round(coverageStats.maxUncoveredMs||0)}};
         bestArenaBossWindowOk=bossWindowOk;
         bestArenaBossEscortOk=bossEscortOk;
         bestArenaPeakMin=peakMin;
@@ -2130,8 +2292,9 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       ...row,
       scriptId:nextId++
     }));
-    const lastIds=parseIds(arenaRows[arenaRows.length-1]?.groupIds||[]);
+    const lastIds=parseIdsKeep(arenaRows[arenaRows.length-1]?.groupIds||[]);
     const finalBossPos=lastIds.indexOf(bossGroupId);
+    const finalCoverage=calcBossCoverageStats(lastIds,arenaRows[arenaRows.length-1]?.gapTimeMs,bossGroupId);
     arenaScores.push(Math.max(0,bestArenaEval.score));
     arenaMetrics.push({
       arenaId:arena.id,
@@ -2141,6 +2304,8 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       bossEscortOk:bestArenaBossEscortOk,
       peakMin:bestArenaPeakMin,
       peakMax:bestArenaPeakMax,
+      bossCoverage:Number((finalCoverage.coverageRatio||0).toFixed(3)),
+      bossGapMs:Math.round(finalCoverage.maxUncoveredMs||0),
       ...bestArenaEval.metrics
     });
     if(!bestArenaBossWindowOk){
@@ -2152,12 +2317,15 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
     if(bestArenaPeakMin<minFish||bestArenaPeakMax>maxFish){
       issues.push(`Arena ${arena.id} 同屏鱼数超出范围（min=${bestArenaPeakMin}, max=${bestArenaPeakMax}, target=${minFish}-${maxFish}）`);
     }
+    if(!finalCoverage.coverageOk){
+      issues.push(`Arena ${arena.id} Boss存活期陪衬覆盖不足（覆盖${Math.round((finalCoverage.coverageRatio||0)*100)}%, 最大空窗${Math.round(finalCoverage.maxUncoveredMs||0)}ms）`);
+    }
     scripts.push(...arenaRows);
   }
 
   const score=arenaScores.length?Math.round(arenaScores.reduce((a,b)=>a+b,0)/arenaScores.length):0;
   const metricLine=arenaMetrics
-    .map(x=>`A${x.arenaId}:Boss@${x.bossPos}/${x.lastLen},Peak${x.peakMin}-${x.peakMax}`)
+    .map(x=>`A${x.arenaId}:Boss@${x.bossPos}/${x.lastLen},Peak${x.peakMin}-${x.peakMax},Cov${Math.round((x.bossCoverage||0)*100)}%`)
     .join(" | ");
   const outIssues=issues.slice(0,10);
   outIssues.push(`templateScore=${score}`);
@@ -2488,8 +2656,8 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
     templateShuffle:Math.round(clampNum(llmCfg.templateShuffle,0,100,55)),
     templateTrim:Math.round(clampNum(llmCfg.templateTrim,0,70,25)),
     templateCandidates:Math.round(clampNum(llmCfg.templateCandidates,1,20,8)),
-    minConcurrentFish:Math.round(clampNum(llmCfg.minConcurrentFish,5,60,12)),
-    maxConcurrentFish:Math.round(clampNum(llmCfg.maxConcurrentFish,10,120,45))
+    minConcurrentFish:Math.round(clampNum(llmCfg.minConcurrentFish,5,28,12)),
+    maxConcurrentFish:Math.round(clampNum(llmCfg.maxConcurrentFish,10,30,30))
   });
   const runLocal=(reasonText)=>{
     if(reasonText) pushAIStatus(reasonText,false);
@@ -2602,7 +2770,7 @@ async function onAutoGenerateScripts(triggerSource="topbar"){
 
 async function saveScripts(outputFile){
   try{
-    const body={outputFile,scripts:state.scripts.map(r=>({scriptId:num(r.scriptId,0),gapTimeMs:Math.max(0,num(r.gapTimeMs,0)),arenaIds:parseIds(r.arenaIds),type:num(r.type,1),groupIds:parseIds(r.groupIds)}))};
+    const body={outputFile,scripts:state.scripts.map(r=>({scriptId:num(r.scriptId,0),gapTimeMs:Math.max(0,num(r.gapTimeMs,0)),arenaIds:parseIds(r.arenaIds),type:num(r.type,1),groupIds:parseIdsKeep(r.groupIds)}))};
     const res=await fetch("/api/save-script",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const data=await res.json();
     if(!data.ok) throw new Error(data.error||"保存失败");
@@ -2622,11 +2790,15 @@ function onSaveAs(){
   saveScripts(input.trim());
 }
 
-function parseIds(value){
-  if(Array.isArray(value)) return uniq(value.map(x=>num(x,0)).filter(x=>x>0));
-  if(typeof value==="number") return value>0?[value]:[];
-  return uniq(String(value||"").split(",").map(t=>num(t.trim(),0)).filter(n=>n>0));
+function parseIdListInternal(value,unique){
+  let out=[];
+  if(Array.isArray(value)) out=value.map(x=>num(x,0)).filter(x=>x>0);
+  else if(typeof value==="number") out=value>0?[value]:[];
+  else out=String(value||"").split(",").map(t=>num(t.trim(),0)).filter(n=>n>0);
+  return unique?uniq(out):out;
 }
+function parseIds(value){return parseIdListInternal(value,true);}
+function parseIdsKeep(value){return parseIdListInternal(value,false);}
 
 function toBool(v){
   if(typeof v==="boolean") return v;
