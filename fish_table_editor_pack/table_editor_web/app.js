@@ -795,15 +795,9 @@ function buildGroupTiming(groupId){
   const birthDurationMs=fishCount>0?Math.max(0,(fishCount-1)*groupFishGapMs):0;
   const routeCycleMs=(g.routeTimes||[]).map(x=>Math.max(0,Math.round((Number(x)||0)*1000))).filter(x=>x>0);
   const routeMaxSec=routeCycleMs.length?Math.max(...routeCycleMs)/1000:0;
-
-  // Group clear time is the latest fish disappearance:
-  // spawnOffset(i) + routeDuration(i), where routeDuration cycles by route order.
-  let clearDurationMs=0;
-  for(let i=0;i<fishCount;i++){
-    const spawnOffset=i*groupFishGapMs;
-    const routeDurationMs=routeCycleMs.length?routeCycleMs[i%routeCycleMs.length]:0;
-    clearDurationMs=Math.max(clearDurationMs,spawnOffset+routeDurationMs);
-  }
+  // Group clear duration follows designer formula:
+  // total birth span + longest route lifetime.
+  const clearDurationMs=birthDurationMs+(routeCycleMs.length?Math.max(...routeCycleMs):0);
   return {
     groupId,exists:true,fishCount,groupFishGapMs,birthDurationMs,routeMaxSec,clearDurationMs,
     hasBoss:groupHasBoss(g),routeIds:g.routeIds||[],fishList,routeCycleMs
@@ -847,6 +841,27 @@ function buildArenaRows(arenaId){
     cursor=spawnDoneMs;
   }
   return result;
+}
+
+function calcArenaTotalMsFromRows(rows){
+  let cursor=0;
+  let totalClearMs=0;
+  for(const row of Array.isArray(rows)?rows:[]){
+    const gapMs=Math.max(0,num(row?.gapTimeMs,0));
+    const groupIds=parseIdsKeep(row?.groupIds||[]);
+    let spawnDoneMs=cursor;
+    let clearDoneMs=cursor;
+    for(let pos=0;pos<groupIds.length;pos++){
+      const gid=groupIds[pos];
+      const gt=buildGroupTiming(gid);
+      const startMs=cursor+pos*gapMs;
+      spawnDoneMs=Math.max(spawnDoneMs,startMs+gt.birthDurationMs);
+      clearDoneMs=Math.max(clearDoneMs,startMs+gt.clearDurationMs);
+    }
+    cursor=spawnDoneMs;
+    totalClearMs=Math.max(totalClearMs,clearDoneMs);
+  }
+  return {spawnTotalMs:cursor,clearTotalMs:totalClearMs};
 }
 
 function buildSelectedArenaTiming(){
@@ -2140,6 +2155,78 @@ function forceBossRowCoveragePlan(row,bossGroupId,coveragePoolIds,minFish,maxFis
   return wrapped;
 }
 
+function enforceArenaDurationLimit(rows,maxTotalMs,bossGroupId,coveragePoolIds,minFish,maxFish){
+  let out=(Array.isArray(rows)?rows:[]).map(row=>({
+    scriptId:num(row?.scriptId,0),
+    gapTimeMs:Math.max(0,num(row?.gapTimeMs,0)),
+    arenaIds:parseIds(row?.arenaIds),
+    type:num(row?.type,1),
+    groupIds:parseIdsKeep(row?.groupIds)
+  }));
+  const limit=Math.max(60000,num(maxTotalMs,600000));
+  if(!out.length) return out;
+  for(let guard=0;guard<360;guard++){
+    const totals=calcArenaTotalMsFromRows(out);
+    if(totals.clearTotalMs<=limit) break;
+    let changed=false;
+
+    let bestIndex=-1;
+    let bestReducible=0;
+    for(let i=0;i<out.length;i++){
+      const minGap=getMinAllowedGapByGroupIds(out[i].groupIds);
+      const reducible=Math.max(0,out[i].gapTimeMs-minGap);
+      if(reducible>bestReducible){
+        bestReducible=reducible;
+        bestIndex=i;
+      }
+    }
+    if(bestIndex>=0&&bestReducible>0){
+      const step=Math.min(400,bestReducible);
+      out[bestIndex].gapTimeMs-=step;
+      changed=true;
+    }else{
+      let trimIndex=-1;
+      let trimLen=0;
+      for(let i=0;i<out.length;i++){
+        const ids=out[i].groupIds||[];
+        if(ids.includes(bossGroupId)) continue;
+        if(ids.length>trimLen&&ids.length>2){
+          trimLen=ids.length;
+          trimIndex=i;
+        }
+      }
+      if(trimIndex>=0){
+        out[trimIndex].groupIds.pop();
+        changed=true;
+      }else{
+        const last=out[out.length-1];
+        if(last&&Array.isArray(last.groupIds)&&last.groupIds.length>6){
+          const bossIdx=last.groupIds.indexOf(bossGroupId);
+          let removePos=last.groupIds.length-1;
+          if(bossIdx>=0){
+            removePos=last.groupIds.length-1;
+            while(removePos>=0&&(last.groupIds[removePos]===bossGroupId||Math.abs(removePos-bossIdx)<=1)){
+              removePos-=1;
+            }
+          }
+          if(removePos>=0){
+            last.groupIds.splice(removePos,1);
+            changed=true;
+          }
+        }
+      }
+    }
+
+    if(!changed) break;
+    out=enforceRowsMinGapConstraint(out);
+    if(out.length){
+      out[out.length-1]=forceBossRowCoveragePlan(out[out.length-1],bossGroupId,coveragePoolIds,minFish,maxFish);
+      out=enforceRowsMinGapConstraint(out);
+    }
+  }
+  return out;
+}
+
 function buildDensityPoolIds(groups){
   return (Array.isArray(groups)?groups:[])
     .slice()
@@ -2255,8 +2342,9 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
   const candidateRounds=Math.max(1,Math.round(clampNum(templateOptions?.templateCandidates,1,20,8)));
   const minFish=Math.round(clampNum(templateOptions?.minConcurrentFish,5,28,12));
   const maxFish=Math.max(minFish+2,Math.round(clampNum(templateOptions?.maxConcurrentFish,10,30,30)));
-  const bossMinRatio=0.55;
-  const bossMaxRatio=0.78;
+  const bossMinRatio=0.46;
+  const bossMaxRatio=0.66;
+  const maxArenaClearMs=10*60*1000;
 
   let nextId=state.scripts.reduce((m,r)=>Math.max(m,r.scriptId),0)+1;
   const scripts=[];
@@ -2379,7 +2467,8 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       scriptId:nextId++
     }));
     arenaRows[arenaRows.length-1]=forceBossRowCoveragePlan(arenaRows[arenaRows.length-1],bossGroupId,coveragePoolIds,minFish,maxFish);
-    const finalArenaRows=enforceRowsMinGapConstraint(arenaRows);
+    let finalArenaRows=enforceRowsMinGapConstraint(arenaRows);
+    finalArenaRows=enforceArenaDurationLimit(finalArenaRows,maxArenaClearMs,bossGroupId,coveragePoolIds,minFish,maxFish);
     const lastIds=parseIdsKeep(finalArenaRows[finalArenaRows.length-1]?.groupIds||[]);
     const finalBossPos=lastIds.indexOf(bossGroupId);
     const minBossIdx=Math.max(1,Math.ceil(lastIds.length*bossMinRatio)-1);
@@ -2390,6 +2479,7 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
     const finalPeakMin=finalPeaks.length?Math.min(...finalPeaks):0;
     const finalPeakMax=finalPeaks.length?Math.max(...finalPeaks):0;
     const finalCoverage=calcBossCoverageStats(lastIds,finalArenaRows[finalArenaRows.length-1]?.gapTimeMs,bossGroupId);
+    const finalTotals=calcArenaTotalMsFromRows(finalArenaRows);
     arenaScores.push(Math.max(0,bestArenaEval.score));
     arenaMetrics.push({
       arenaId:arena.id,
@@ -2399,6 +2489,7 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       bossEscortOk:finalBossEscortOk,
       peakMin:finalPeakMin,
       peakMax:finalPeakMax,
+      totalClearMs:Math.round(finalTotals.clearTotalMs||0),
       bossCoverage:Number((finalCoverage.coverageRatio||0).toFixed(3)),
       bossGapMs:Math.round(finalCoverage.maxUncoveredMs||0),
       ...bestArenaEval.metrics
@@ -2415,12 +2506,15 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
     if(!finalCoverage.coverageOk){
       issues.push(`Arena ${arena.id} Boss存活期陪衬覆盖不足（覆盖${Math.round((finalCoverage.coverageRatio||0)*100)}%, 最大空窗${Math.round(finalCoverage.maxUncoveredMs||0)}ms）`);
     }
+    if(finalTotals.clearTotalMs>maxArenaClearMs){
+      issues.push(`Arena ${arena.id} 总清场时长超限（${Math.round(finalTotals.clearTotalMs/1000)}s > 600s）`);
+    }
     scripts.push(...finalArenaRows);
   }
 
   const score=arenaScores.length?Math.round(arenaScores.reduce((a,b)=>a+b,0)/arenaScores.length):0;
   const metricLine=arenaMetrics
-    .map(x=>`A${x.arenaId}:Boss@${x.bossPos}/${x.lastLen},Peak${x.peakMin}-${x.peakMax},Cov${Math.round((x.bossCoverage||0)*100)}%`)
+    .map(x=>`A${x.arenaId}:Boss@${x.bossPos}/${x.lastLen},Peak${x.peakMin}-${x.peakMax},Cov${Math.round((x.bossCoverage||0)*100)}%,Clear${Math.round((x.totalClearMs||0)/1000)}s`)
     .join(" | ");
   const outIssues=issues.slice(0,10);
   outIssues.push(`templateScore=${score}`);
