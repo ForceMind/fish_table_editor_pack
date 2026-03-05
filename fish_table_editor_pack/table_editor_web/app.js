@@ -2056,6 +2056,90 @@ function ensureBossCoverageDeterministic(groupIds,gapMs,bossGroupId,coveragePool
   return out;
 }
 
+function enforceRowsMinGapConstraint(rows){
+  const out=(Array.isArray(rows)?rows:[]).map(row=>({
+    scriptId:num(row?.scriptId,0),
+    gapTimeMs:Math.max(0,num(row?.gapTimeMs,0)),
+    arenaIds:parseIds(row?.arenaIds),
+    type:num(row?.type,1),
+    groupIds:parseIdsKeep(row?.groupIds)
+  }));
+  for(const row of out){
+    const minGap=getMinAllowedGapByGroupIds(row.groupIds);
+    if(row.gapTimeMs<minGap) row.gapTimeMs=minGap;
+  }
+  return out;
+}
+
+function forceBossRowCoveragePlan(row,bossGroupId,coveragePoolIds,minFish,maxFish){
+  const current={
+    scriptId:num(row?.scriptId,0),
+    gapTimeMs:Math.max(0,num(row?.gapTimeMs,0)),
+    arenaIds:parseIds(row?.arenaIds),
+    type:num(row?.type,1),
+    groupIds:parseIdsKeep(row?.groupIds)
+  };
+  if(!current.groupIds.includes(bossGroupId)) return current;
+  const pool=uniq((Array.isArray(coveragePoolIds)?coveragePoolIds:[]).filter(gid=>gid>0&&gid!==bossGroupId));
+  if(!pool.length){
+    current.gapTimeMs=Math.max(current.gapTimeMs,getMinAllowedGapByGroupIds(current.groupIds));
+    return current;
+  }
+
+  const bossDur=Math.max(1000,groupClearDurationMsById(bossGroupId));
+  const maxEscortDur=Math.max(...pool.map(gid=>groupClearDurationMsById(gid)));
+  let gap=Math.max(current.gapTimeMs,getMinAllowedGapByGroupIds(current.groupIds));
+  const targetSlots=24;
+  const suggested=Math.round(Math.max(1000,(bossDur-maxEscortDur)/Math.max(1,targetSlots))/50)*50;
+  if(suggested>gap) gap=suggested;
+  gap=clamp(gap,Math.max(1000,getMinAllowedGapByGroupIds(current.groupIds)),12000);
+
+  const ids=current.groupIds.filter(gid=>gid>0&&gid!==bossGroupId);
+  const oldBossIndex=current.groupIds.indexOf(bossGroupId);
+  const prefixRaw=oldBossIndex>0?ids.slice(0,oldBossIndex):ids.slice(0,Math.min(4,ids.length));
+  const prefix=prefixRaw.slice();
+  const bestEscort=pool[0];
+  const tailEscort=pool[Math.min(1,pool.length-1)];
+  if(!prefix.length){
+    prefix.push(bestEscort);
+  }else{
+    const last=prefix[prefix.length-1];
+    if(groupClearDurationMsById(last)<gap){
+      prefix.push(bestEscort);
+    }
+  }
+
+  let rebuilt=[...prefix,bossGroupId,tailEscort];
+  const bossIndex=rebuilt.indexOf(bossGroupId);
+  let coverageEnd=Math.max(
+    (bossIndex-1>=0?(bossIndex-1)*gap+groupClearDurationMsById(rebuilt[bossIndex-1]):0),
+    (bossIndex+1)*gap+groupClearDurationMsById(tailEscort)
+  );
+  const bossStart=bossIndex*gap;
+  const bossEnd=bossStart+bossDur;
+  let cursor=1;
+  while((coverageEnd<bossEnd||rebuilt.length<8)&&rebuilt.length<260){
+    const gid=pool[cursor%pool.length];
+    rebuilt.push(gid);
+    const pos=rebuilt.length-1;
+    const end=pos*gap+groupClearDurationMsById(gid);
+    coverageEnd=Math.max(coverageEnd,end);
+    cursor+=1;
+  }
+
+  rebuilt=reduceNeighborRepeatsDeterministic(rebuilt,pool,bossGroupId);
+  rebuilt=constrainSequenceByFishRangeDeterministic(rebuilt,gap,minFish,maxFish,bossGroupId,pool,new Set([bossGroupId]));
+  if(!rebuilt.includes(bossGroupId)){
+    const p=Math.min(rebuilt.length,Math.max(1,Math.floor(rebuilt.length*0.62)));
+    rebuilt.splice(p,0,bossGroupId);
+  }
+  let wrapped=enforceBossPlacementDeterministic([{...current,gapTimeMs:gap,groupIds:rebuilt,type:2}],bossGroupId,pool,0.55,0.78)[0];
+  wrapped.groupIds=ensureBossCoverageDeterministic(wrapped.groupIds,wrapped.gapTimeMs,bossGroupId,pool,minFish,maxFish);
+  wrapped.gapTimeMs=Math.max(wrapped.gapTimeMs,getMinAllowedGapByGroupIds(wrapped.groupIds));
+  wrapped.type=2;
+  return wrapped;
+}
+
 function buildDensityPoolIds(groups){
   return (Array.isArray(groups)?groups:[])
     .slice()
@@ -2259,7 +2343,9 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       const trialKeep=new Set([bossGroupId,trialLast.groupIds[trialBossPos-1],trialLast.groupIds[trialBossPos+1]].filter(x=>num(x,0)>0));
       trialLast.groupIds=constrainSequenceByFishRangeDeterministic(trialLast.groupIds,trialLast.gapTimeMs,minFish,maxFish,bossGroupId,fallbackIds,trialKeep);
       trialLast.groupIds=ensureBossCoverageDeterministic(trialLast.groupIds,trialLast.gapTimeMs,bossGroupId,coveragePoolIds,minFish,maxFish);
+      arranged[arranged.length-1]=forceBossRowCoveragePlan(trialLast,bossGroupId,coveragePoolIds,minFish,maxFish);
       arranged=enforceBossPlacementDeterministic(arranged,bossGroupId,escortIds,bossMinRatio,bossMaxRatio);
+      arranged=enforceRowsMinGapConstraint(arranged);
 
       const lastIds=parseIdsKeep(arranged[arranged.length-1]?.groupIds||[]);
       const finalBossPos=lastIds.indexOf(bossGroupId);
@@ -2292,35 +2378,44 @@ function generateScriptsByTemplate(minPerArena,templateOptions){
       ...row,
       scriptId:nextId++
     }));
-    const lastIds=parseIdsKeep(arenaRows[arenaRows.length-1]?.groupIds||[]);
+    arenaRows[arenaRows.length-1]=forceBossRowCoveragePlan(arenaRows[arenaRows.length-1],bossGroupId,coveragePoolIds,minFish,maxFish);
+    const finalArenaRows=enforceRowsMinGapConstraint(arenaRows);
+    const lastIds=parseIdsKeep(finalArenaRows[finalArenaRows.length-1]?.groupIds||[]);
     const finalBossPos=lastIds.indexOf(bossGroupId);
-    const finalCoverage=calcBossCoverageStats(lastIds,arenaRows[arenaRows.length-1]?.gapTimeMs,bossGroupId);
+    const minBossIdx=Math.max(1,Math.ceil(lastIds.length*bossMinRatio)-1);
+    const maxBossIdx=Math.max(minBossIdx,Math.min(lastIds.length-2,Math.floor(lastIds.length*bossMaxRatio)-1));
+    const finalBossWindowOk=finalBossPos>=minBossIdx&&finalBossPos<=maxBossIdx;
+    const finalBossEscortOk=finalBossPos>0&&finalBossPos<lastIds.length-1&&groupAvgPayoutById(lastIds[finalBossPos-1])<20&&groupAvgPayoutById(lastIds[finalBossPos+1])<20;
+    const finalPeaks=finalArenaRows.map(row=>calcMaxConcurrentFish(row.groupIds,row.gapTimeMs));
+    const finalPeakMin=finalPeaks.length?Math.min(...finalPeaks):0;
+    const finalPeakMax=finalPeaks.length?Math.max(...finalPeaks):0;
+    const finalCoverage=calcBossCoverageStats(lastIds,finalArenaRows[finalArenaRows.length-1]?.gapTimeMs,bossGroupId);
     arenaScores.push(Math.max(0,bestArenaEval.score));
     arenaMetrics.push({
       arenaId:arena.id,
       bossPos:finalBossPos+1,
       lastLen:lastIds.length,
-      bossWindowOk:bestArenaBossWindowOk,
-      bossEscortOk:bestArenaBossEscortOk,
-      peakMin:bestArenaPeakMin,
-      peakMax:bestArenaPeakMax,
+      bossWindowOk:finalBossWindowOk,
+      bossEscortOk:finalBossEscortOk,
+      peakMin:finalPeakMin,
+      peakMax:finalPeakMax,
       bossCoverage:Number((finalCoverage.coverageRatio||0).toFixed(3)),
       bossGapMs:Math.round(finalCoverage.maxUncoveredMs||0),
       ...bestArenaEval.metrics
     });
-    if(!bestArenaBossWindowOk){
+    if(!finalBossWindowOk){
       issues.push(`Arena ${arena.id} Boss位置未落在后段窗口（${bossMinRatio}-${bossMaxRatio}）`);
     }
-    if(!bestArenaBossEscortOk){
+    if(!finalBossEscortOk){
       issues.push(`Arena ${arena.id} Boss缺少低倍率陪衬（前后小鱼）`);
     }
-    if(bestArenaPeakMin<minFish||bestArenaPeakMax>maxFish){
-      issues.push(`Arena ${arena.id} 同屏鱼数超出范围（min=${bestArenaPeakMin}, max=${bestArenaPeakMax}, target=${minFish}-${maxFish}）`);
+    if(finalPeakMin<minFish||finalPeakMax>maxFish){
+      issues.push(`Arena ${arena.id} 同屏鱼数超出范围（min=${finalPeakMin}, max=${finalPeakMax}, target=${minFish}-${maxFish}）`);
     }
     if(!finalCoverage.coverageOk){
       issues.push(`Arena ${arena.id} Boss存活期陪衬覆盖不足（覆盖${Math.round((finalCoverage.coverageRatio||0)*100)}%, 最大空窗${Math.round(finalCoverage.maxUncoveredMs||0)}ms）`);
     }
-    scripts.push(...arenaRows);
+    scripts.push(...finalArenaRows);
   }
 
   const score=arenaScores.length?Math.round(arenaScores.reduce((a,b)=>a+b,0)/arenaScores.length):0;
